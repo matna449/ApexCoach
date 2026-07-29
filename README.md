@@ -6,18 +6,18 @@ Status: **design phase** — v1.0 is fully specified across four companion docum
 
 ## Documentation
 
-The full v1.0 design is captured in four companion documents, meant to be read in this order. Each is Word (`.docx`) source; this table is the index and must be kept in sync whenever a doc's version, status, or scope changes.
+The full v1.0 design is captured in four companion documents, meant to be read in this order. `.docx` is the authored source (opens in Word); the linked `.md` is a generated, GitHub-readable mirror of the same content — read that one here.
 
 | # | Document | Covers | Version | Status | Date |
 |---|----------|--------|---------|--------|------|
-| 1 | [ApexCoach_PRD_v1.0.docx](./ApexCoach_PRD_v1.0.docx) | Problem statement, vision, three-horizon model, feature catalogue (F01–F10), success metrics, constraints, roadmap | 1.0 | In Review | June 2026 |
-| 2 | [ApexCoach_SDD_v1.0.docx](./ApexCoach_SDD_v1.0.docx) | Architecture & module boundaries, tech stack, SQLite schema, key algorithm specs, infra/deployment, test strategy overview | 1.0 | In Review | June 2026 |
-| 3 | [ApexCoach_API_Integration_Contract_v1.0.docx](./ApexCoach_API_Integration_Contract_v1.0.docx) | WHOOP / Strava / Ollama OAuth flows, endpoint contracts, mock fixtures, failure modes, rate-limit strategy | 1.0 | In Review | June 2026 |
-| 4 | [ApexCoach_Logic_Algorithm_Spec_v1.0.docx](./ApexCoach_Logic_Algorithm_Spec_v1.0.docx) | Input classification bands, full decision trees, weekly state machine, monthly load/forecast model, session scoring, zone calculator | 1.0 | In Review | June 2026 |
+| 1 | [PRD](./docs/ApexCoach_PRD_v1.0.md) ([.docx](./ApexCoach_PRD_v1.0.docx)) | Problem statement, vision, three-horizon model, feature catalogue (F01–F10), success metrics, constraints, roadmap | 1.0 | In Review | June 2026 |
+| 2 | [SDD](./docs/ApexCoach_SDD_v1.0.md) ([.docx](./ApexCoach_SDD_v1.0.docx)) | Architecture & module boundaries, tech stack, SQLite schema, key algorithm specs, infra/deployment, test strategy overview | 1.0 | In Review | June 2026 |
+| 3 | [API Integration Contract](./docs/ApexCoach_API_Integration_Contract_v1.0.md) ([.docx](./ApexCoach_API_Integration_Contract_v1.0.docx)) | WHOOP / Strava / Ollama OAuth flows, endpoint contracts, mock fixtures, failure modes, rate-limit strategy | 1.0 | In Review | June 2026 |
+| 4 | [Logic & Algorithm Spec](./docs/ApexCoach_Logic_Algorithm_Spec_v1.0.md) ([.docx](./ApexCoach_Logic_Algorithm_Spec_v1.0.docx)) | Input classification bands, full decision trees, weekly state machine, monthly load/forecast model, session scoring, zone calculator | 1.0 | In Review | June 2026 |
 
 Each document's own "Document Control" section names the next document in the chain — the Logic & Algorithm Spec points to a not-yet-written **Test Strategy Document** as the next piece of design work.
 
-> When a `.docx` is revised (version bump, status change), update its row above in the same commit — this table is the single index into the doc set and should never drift from the files it links.
+> When a `.docx` is revised (version bump, status change), update its row above **and** regenerate `docs/*.md` in the same commit: run `./scripts/convert_docs.sh` (requires `pandoc`; uses macOS `textutil` if present to preserve diagram/code alignment — see [scripts/](./scripts/)). This table is the single index into the doc set and should never drift from the files it links.
 
 ### System at a glance
 
@@ -28,7 +28,7 @@ Each document's own "Document Control" section names the next document in the ch
 - **Explanation layer** — local Ollama (LLaMA 3.1 8B) turns structured decision JSON into natural language. It explains; it never decides.
 - **Persistence** — SQLite in v1.0, schema written to be PostgreSQL-compatible for a clean v2.0 promotion to Azure.
 
-See the [PRD](./ApexCoach_PRD_v1.0.docx) §3 for the full three-horizon model and the [SDD](./ApexCoach_SDD_v1.0.docx) §1.2 for the system context diagram.
+See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model and the [SDD](./docs/ApexCoach_SDD_v1.0.md) §1.2 for the system context diagram.
 
 ## Roadmap
 
