@@ -77,8 +77,9 @@ def classify_daily_inputs(
 ) -> dict:
     """Classify a day's raw inputs into the domain bands daily_engine consumes.
 
-    Returns classified enums only — recovery_pct/hrv_delta_ms are included
-    for audit/logging, never for decision logic downstream.
+    The dict's *_band values are the classified enums decision logic must use.
+    It also carries the raw recovery_pct/hrv_delta_ms for audit/logging —
+    callers must not use those two fields for decision logic; only the bands.
     """
     recovery_pct = whoop_payload.whoop_recovery_pct
     if recovery_pct is None:
