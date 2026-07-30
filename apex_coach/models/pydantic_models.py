@@ -1,0 +1,112 @@
+"""Typed API payload models (API Contract §2). See docs/adr/0011 for
+WhoopDailyPayload combining all 3 WHOOP endpoints.
+"""
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, field_validator
+
+ScoreState = Literal["SCORED", "PENDING_SCORE", "UNSCORABLE"]
+
+
+class WhoopRecoveryScore(BaseModel):
+    recovery_score: float
+    resting_heart_rate: float
+    hrv_rmssd_milli: float
+    spo2_percentage: float | None = None
+    skin_temp_celsius: float | None = None
+
+
+class WhoopRecovery(BaseModel):
+    cycle_id: int
+    created_at: datetime
+    score_state: ScoreState
+    score: WhoopRecoveryScore | None = None
+
+    @field_validator("score_state")
+    @classmethod
+    def must_be_scored(cls, v: str) -> str:
+        if v != "SCORED":
+            raise ValueError(f"Recovery not yet scored: {v}")
+        return v
+
+
+class WhoopCycleScore(BaseModel):
+    strain: float
+    kilojoule: float
+    average_heart_rate: int
+    max_heart_rate: int
+
+
+class WhoopCycle(BaseModel):
+    id: int
+    created_at: datetime
+    score_state: ScoreState
+    score: WhoopCycleScore | None = None
+
+    @field_validator("score_state")
+    @classmethod
+    def must_be_scored(cls, v: str) -> str:
+        if v != "SCORED":
+            raise ValueError(f"Cycle not yet scored: {v}")
+        return v
+
+
+class WhoopSleepStageSummary(BaseModel):
+    total_in_bed_time_milli: int
+    total_awake_time_milli: int
+
+
+class WhoopSleepScore(BaseModel):
+    sleep_performance_percentage: float
+    stage_summary: WhoopSleepStageSummary
+
+    @property
+    def total_sleep_hours(self) -> float:
+        asleep_milli = (
+            self.stage_summary.total_in_bed_time_milli
+            - self.stage_summary.total_awake_time_milli
+        )
+        return asleep_milli / 1000 / 60 / 60
+
+
+class WhoopSleep(BaseModel):
+    id: int
+    created_at: datetime
+    score_state: ScoreState
+    score: WhoopSleepScore | None = None
+
+    @field_validator("score_state")
+    @classmethod
+    def must_be_scored(cls, v: str) -> str:
+        if v != "SCORED":
+            raise ValueError(f"Sleep not yet scored: {v}")
+        return v
+
+
+class WhoopDailyPayload(BaseModel):
+    date: str
+    recovery: WhoopRecovery
+    cycle: WhoopCycle
+    sleep: WhoopSleep
+
+    @property
+    def whoop_recovery_pct(self) -> float | None:
+        return self.recovery.score.recovery_score if self.recovery.score else None
+
+    @property
+    def whoop_hrv_ms(self) -> float | None:
+        return self.recovery.score.hrv_rmssd_milli if self.recovery.score else None
+
+    @property
+    def whoop_rhr_bpm(self) -> float | None:
+        return self.recovery.score.resting_heart_rate if self.recovery.score else None
+
+    @property
+    def whoop_strain(self) -> float | None:
+        return self.cycle.score.strain if self.cycle.score else None
+
+    @property
+    def whoop_sleep_hours(self) -> float | None:
+        return self.sleep.score.total_sleep_hours if self.sleep.score else None
