@@ -110,3 +110,40 @@ class WhoopDailyPayload(BaseModel):
     @property
     def whoop_sleep_hours(self) -> float | None:
         return self.sleep.score.total_sleep_hours if self.sleep.score else None
+
+
+class StravaSplit(BaseModel):
+    split: int
+    distance: float
+    elapsed_time: int
+    elevation_difference: float
+    average_speed: float
+    average_heartrate: float | None = None
+    average_grade_adjusted_speed: float | None = None
+
+
+class StravaActivity(BaseModel):
+    id: int
+    name: str
+    type: str
+    start_date: datetime
+    elapsed_time: int  # seconds
+    distance: float  # metres
+    total_elevation_gain: float  # metres
+    average_speed: float  # m/s
+    average_heartrate: float | None = None
+    max_heartrate: float | None = None
+    has_heartrate: bool = False
+    splits_metric: list[StravaSplit] = []
+
+    @property
+    def pace_sec_per_km(self) -> float | None:
+        if self.average_speed and self.average_speed > 0:
+            return 1000 / self.average_speed
+        return None
+
+    @property
+    def grade_pct(self) -> float:
+        if self.distance > 0:
+            return (self.total_elevation_gain / self.distance) * 100
+        return 0.0

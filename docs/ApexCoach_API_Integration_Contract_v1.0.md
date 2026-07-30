@@ -351,7 +351,7 @@ refresh_token. Always overwrite the stored token immediately.
 
 ### 3.2 Endpoint: GET /v3/athlete/activities
 
-Lists the athlete's recent activities. Called on each sync to detect new sessions since the last stored Strava ID. Uses the after parameter to fetch only new activities — never re-fetches what is already stored.
+Lists the athlete's recent activities. Called on each sync to detect new sessions since the last stored Strava ID. Uses the after parameter to minimise redundant fetches — but a strava_id can still reappear (e.g. a Strava-side edit within the polling window), which is exactly why sync upserts rather than assumes no overlap. See Deduplication below.
 
 |  |  |
 |----|----|
@@ -359,7 +359,7 @@ Lists the athlete's recent activities. Called on each sync to detect new session
 | **Auth Header** | Authorization: Bearer {access_token} |
 | **Query Params** | after={last_sync_unix_ts}&per_page=30&page=1 |
 | **Adapter Method** | strava_adapter.get_new_activities(since_ts) -\> list\[StravaActivity\] |
-| **Deduplication** | strava_id is UNIQUE in activities table. INSERT OR IGNORE on sync. |
+| **Deduplication** | strava_id is UNIQUE in activities table. Upsert on sync (INSERT ... ON CONFLICT DO UPDATE), not INSERT OR IGNORE — resyncs correct data (e.g. Strava-side fixes to avg HR), and rpe is excluded from the update set so it's never clobbered. See docs/adr/0006. |
 
 #### Mock Payload — Single Activity
 

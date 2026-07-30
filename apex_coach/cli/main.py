@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import click
 
+from apex_coach.adapters.strava_adapter import MockStravaAdapter
 from apex_coach.adapters.whoop_adapter import MockWhoopAdapter
 from apex_coach.services.zone_calculator import calculate_zones
 
@@ -49,6 +50,29 @@ def whoop_smoke(date: str | None):
     click.echo(f"HRV: {payload.whoop_hrv_ms} ms")
     click.echo(f"RHR: {payload.whoop_rhr_bpm} bpm")
     click.echo(f"Strain: {payload.whoop_strain}")
+
+
+@cli.command(name="strava-smoke")
+@click.option(
+    "--since-ts",
+    type=int,
+    default=0,
+    help="Unix timestamp — fetch activities newer than this (defaults to 0, all).",
+)
+def strava_smoke(since_ts: int):
+    """Fetch (mock) recent Strava activities and print them. No network calls."""
+    adapter = MockStravaAdapter()
+    activities = adapter.get_new_activities(since_ts)
+
+    for activity in activities:
+        click.echo(f"{activity.name} ({activity.type})")
+        click.echo(f"  Distance: {activity.distance} m")
+        click.echo(f"  Duration: {activity.elapsed_time} s")
+        hr = activity.average_heartrate
+        click.echo(f"  Avg HR: {hr} bpm" if hr is not None else "  Avg HR: n/a")
+        pace = activity.pace_sec_per_km
+        click.echo(f"  Pace: {pace:.1f} sec/km" if pace is not None else "  Pace: n/a")
+        click.echo(f"  Elevation gain: {activity.total_elevation_gain} m")
 
 
 if __name__ == "__main__":
