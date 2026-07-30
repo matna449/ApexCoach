@@ -80,7 +80,7 @@ STEP 5 — TOKEN REFRESH (automatic, every run)
 
 > **SECURITY NOTE**
 >
-> Tokens are stored in the SQLite database (table: oauth_tokens), encrypted at rest using Fernet symmetric encryption. The encryption key is derived from WHOOP_CLIENT_SECRET — no separate key management required in v1.0. Never store raw tokens in .env or plaintext files.
+> Tokens are stored in the SQLite database (table: oauth_tokens), encrypted at rest using Fernet symmetric encryption. The encryption key is derived via PBKDF2HMAC from a dedicated APEX_ENCRYPTION_KEY (see SDD §6.3), not from either provider's OAuth client secret — see docs/adr/0005. Never store raw tokens in .env or plaintext files.
 
 ### 2.2 Endpoint: GET /v1/recovery
 

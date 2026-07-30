@@ -465,6 +465,7 @@ STRAVA_REDIRECT_URI=http://localhost:8080/callback/strava
 
 # Database
 DATABASE_URL=sqlite+aiosqlite:///./apex_coach.db
+APEX_ENCRYPTION_KEY=...          # Passphrase; Fernet key for oauth_tokens derived via PBKDF2HMAC, see docs/adr/0005
 
 # Ollama
 OLLAMA_BASE_URL=http://localhost:11434
