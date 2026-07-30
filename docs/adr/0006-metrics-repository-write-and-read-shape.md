@@ -1,0 +1,13 @@
+---
+status: accepted
+---
+
+# activities is the mutable exception in the audit trail; hr_zones/session_scores stay append-only without a DB constraint; add a date-range read for daily_metrics
+
+ADR-0003 described the audit-trail tables (`daily_metrics`, `hr_zones`, `activities`, `session_scores`) as uniformly "never mutated after creation for auditability." Building F10.3 (`db/metrics_repository.py`) showed this was overstated for `activities` specifically: SDD §4.4 documents `activities.rpe` as "Manual post-session RPE input" — entered by the athlete after the Strava-sync row already exists — and `activities.strava_id` (UNIQUE) as "Used for deduplication on sync," meaning a re-sync of an already-known activity must update the existing row, not insert a duplicate. Both requirements are impossible under a strict append-only rule. `daily_metrics`, `hr_zones`, and `session_scores` have no equivalent post-hoc-input or resync column and remain genuinely append-only.
+
+`metrics_repository.py` therefore treats `activities` as an upsert on `strava_id` (`INSERT ... ON CONFLICT DO UPDATE`, same pattern as `token_repository.save_token()` from F10.2), while `daily_metrics`, `hr_zones`, and `session_scores` get plain inserts. For `hr_zones.date` and `session_scores.activity_id`, the SDD's prose says "one row per day" / "one row per scored activity," but neither column carries a unique constraint in the merged schema — there's no conflict target to upsert against, and no caller exists yet that could violate the invariant. We're leaving this as an application-level expectation (a future caller inserts once per day/activity; if that's ever violated, "one row per day" degrades gracefully to "most recent row per day" via `ORDER BY created_at DESC`) rather than adding a unique constraint via a new migration for a problem nothing has caused yet.
+
+Separately, `metrics_repository` adds `get_daily_metrics_range(start_date, end_date)` — a generic date-range read, not built for any specific caller — because F05.1's Orchestrator (not yet built) will need a rolling 30-day HRV window to compute `hrv_30d_avg_ms` per SDD §5.4, and this ticket's acceptance criteria explicitly calls for query helpers that cover future consumers' documented needs, not just today's CRUD.
+
+Alternative considered: keep `activities` strictly append-only and model RPE as a separate linked table instead of an in-place update. Rejected — it would have preserved ADR-0003's blanket claim literally, but at the cost of a schema table nothing else in the docs anticipates, for a case (`strava_id` UNIQUE, explicitly documented as dedup) the schema was already designed around.
