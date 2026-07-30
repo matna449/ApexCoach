@@ -599,6 +599,7 @@ Adaptive health check scores can override the daily engine output regardless of 
 
 ```
 IF any adaptive_health_check_score >= 4:
+  (pain/discomfort-style questions only — high-is-bad direction. Does NOT apply to inverted questions like Recovery/Rest's wellbeing check, where a high score is good. See docs/adr/0012.)
   -> FORCE ABORT on any session that loads the flagged structure
   -> This override is NOT adjustable by the athlete in v1.0
   -> Log override reason: 'health_check_override: {check_name} = {score}'
