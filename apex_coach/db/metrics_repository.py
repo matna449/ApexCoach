@@ -1,8 +1,11 @@
-"""Sole writer for the audit-trail tables (ADR-0003, ADR-0006).
+"""Sole writer for the audit-trail tables (ADR-0003, ADR-0006, ADR-0012).
 
-daily_metrics, hr_zones, session_scores are append-only. activities is the
-documented exception — upsert on strava_id (dedup-on-sync) plus a targeted
-RPE update (athlete input arrives after the Strava-sync row already exists).
+hr_zones and session_scores are append-only. activities is a documented
+exception — upsert on strava_id (dedup-on-sync) plus a targeted RPE update
+(athlete input arrives after the Strava-sync row already exists).
+daily_metrics is append-only per date but supports a targeted update:
+WHOOP fetch and the morning health check are independent writers that
+populate different columns of the same day's row (ADR-0012).
 """
 
 import sqlalchemy as sa
@@ -26,6 +29,16 @@ class MetricsRepository:
                 daily_metrics.insert().values(**fields).returning(daily_metrics.c.id)
             )
             return result.scalar_one()
+
+    def update_daily_metrics(self, date: str, **fields) -> None:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                daily_metrics.update()
+                .where(daily_metrics.c.date == date)
+                .values(**fields)
+            )
+            if result.rowcount == 0:
+                raise ValueError(f"no daily_metrics row for date {date!r}")
 
     def get_daily_metrics(self, date: str) -> dict | None:
         with self._engine.begin() as conn:
