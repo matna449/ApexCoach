@@ -3,6 +3,7 @@ import pytest
 from apex_coach.services.session_scorer import (
     WARMUP_SECONDS,
     compute_execution_score,
+    compute_hr_drift_ratio,
     detect_overpush,
     detect_underpush,
     score_hr_drift,
@@ -248,3 +249,59 @@ def test_score_session_strength_has_no_time_in_zone_or_hr_drift():
     assert result["score_breakdown"]["rpe_alignment_score"] == 100.0
     assert result["overpush_flag"] is False
     assert result["underpush_flag"] is False
+
+
+# -- input validation (Copilot review) --------------------------------------
+
+
+def test_compute_hr_drift_ratio_rejects_too_short_stream():
+    with pytest.raises(ValueError):
+        compute_hr_drift_ratio([100.0])
+    with pytest.raises(ValueError):
+        compute_hr_drift_ratio([])
+
+
+def test_compute_hr_drift_ratio_rejects_zero_first_half_average():
+    with pytest.raises(ValueError):
+        compute_hr_drift_ratio([0.0, 0.0, 100.0, 100.0])
+
+
+def test_score_load_delta_rejects_non_positive_planned_load():
+    with pytest.raises(ValueError):
+        score_load_delta(100, 0)
+    with pytest.raises(ValueError):
+        score_load_delta(100, -10)
+
+
+def test_detect_overpush_rejects_empty_hr_data():
+    with pytest.raises(ValueError):
+        detect_overpush([], "Threshold", 178)
+
+
+def test_detect_underpush_threshold_rejects_empty_hr_data():
+    with pytest.raises(ValueError):
+        detect_underpush([], "Threshold", 163, 178)
+
+
+def test_score_session_rejects_unknown_session_type():
+    with pytest.raises(ValueError):
+        score_session(
+            session_type="Yoga",
+            hr_data=[150.0] * 1000,
+            zone_boundaries=None,
+            actual_rpe=5,
+            actual_load_au=100,
+            planned_load_au=100,
+        )
+
+
+def test_score_session_rejects_missing_zone_boundaries_for_hr_paced_session():
+    with pytest.raises(ValueError):
+        score_session(
+            session_type="Threshold",
+            hr_data=[150.0] * 1000,
+            zone_boundaries=None,
+            actual_rpe=7,
+            actual_load_au=100,
+            planned_load_au=100,
+        )

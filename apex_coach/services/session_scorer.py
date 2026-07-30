@@ -69,8 +69,13 @@ def score_time_in_zone(
 def compute_hr_drift_ratio(hr_data: list[float]) -> float:
     """Raw cardiac decoupling coefficient — persisted separately as
     session_scores.hr_drift_coeff, distinct from the tiered hr_drift_score."""
+    if len(hr_data) < 2:
+        raise ValueError("hr_data must have at least 2 samples to compute drift")
+
     midpoint = len(hr_data) // 2
     first_half_avg = sum(hr_data[:midpoint]) / midpoint
+    if first_half_avg == 0:
+        raise ValueError("cannot compute drift ratio: first-half average HR is 0")
     second_half_avg = sum(hr_data[midpoint:]) / (len(hr_data) - midpoint)
     return (second_half_avg - first_half_avg) / first_half_avg
 
@@ -110,6 +115,9 @@ def score_rpe_alignment(session_type: str, actual_rpe: int) -> float:
 
 
 def score_load_delta(actual_load_au: float, planned_load_au: float) -> float:
+    if planned_load_au <= 0:
+        raise ValueError(f"planned_load_au must be positive, got {planned_load_au!r}")
+
     load_delta_ratio = abs(actual_load_au - planned_load_au) / planned_load_au
     if load_delta_ratio <= 0.05:
         return 100.0
@@ -150,6 +158,9 @@ def detect_overpush(
     else:
         return False
 
+    if not hr_data:
+        raise ValueError("hr_data must not be empty")
+
     over_seconds = sum(1 for hr in hr_data if hr > zone_max)
     return (over_seconds / len(hr_data)) > threshold_pct
 
@@ -167,6 +178,8 @@ def detect_underpush(
         return (under_seconds / len(non_warmup)) > 0.40
 
     if session_type == "Threshold":
+        if not hr_data:
+            raise ValueError("hr_data must not be empty")
         avg_hr = sum(hr_data) / len(hr_data)
         return avg_hr < zone_min
 
@@ -184,7 +197,16 @@ def score_session(
     """Score a completed session. Pure — caller supplies stream data and
     resolved zone boundaries (from zone_calculator), no DB/adapter access.
     """
+    if session_type not in EXPECTED_RPE:
+        raise ValueError(f"unknown session_type: {session_type!r}")
+
     intended_zone_key = INTENDED_ZONE.get(session_type)
+    if intended_zone_key is not None and zone_boundaries is None:
+        raise ValueError(
+            f"{session_type} is HR-paced (zone {intended_zone_key}) but "
+            "zone_boundaries was not provided"
+        )
+
     if intended_zone_key is not None:
         zone_min, zone_max = zone_boundaries[intended_zone_key]
         time_in_zone_score = score_time_in_zone(hr_data, session_type, zone_min, zone_max)
