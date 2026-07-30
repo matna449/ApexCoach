@@ -404,7 +404,7 @@ Ollama runs as a background service on localhost:11434. No authentication requir
 | **Base URL** | http://localhost:11434 |
 | **Model** | llama3.1:8b (pull with: ollama pull llama3.1:8b) |
 | **Context window** | 128k tokens. Full structured input comfortably fits. |
-| **Adapter Method** | ollama_adapter.explain(decision_context: dict) -\> str |
+| **Adapter Method** | ollama_adapter.explain(decision_context: dict) -\> ExplanationResult (see docs/adr/0010) |
 | **Hardware fit** | ~6 GB VRAM for 8B model. 24 GB M4 Pro has ample headroom. |
 
 ### 4.2 Endpoint: POST /api/chat

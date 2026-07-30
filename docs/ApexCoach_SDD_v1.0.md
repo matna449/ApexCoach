@@ -127,6 +127,7 @@ apex_coach/
 ├── adapters/
 │   ├── whoop_adapter.py         # WHOOP API: OAuth, token refresh, payload fetch
 │   ├── strava_adapter.py        # Strava API: OAuth, activity fetch, stream fetch
+│   ├── errors.py               # Shared AdapterError hierarchy — see docs/adr/0010
 │   └── ollama_adapter.py        # Ollama: structured prompt, JSON mode, streaming
 ├── db/
 │   ├── schema.py                # SQLAlchemy Core table definitions
@@ -167,7 +168,7 @@ Each module exposes a defined interface. Internal implementation details are pri
 | monthly_engine | Session scores (all), Load targets, Race calendar | Monthly summary, Load forecast, Phase recommendation | Integration — simulate full training block |
 | whoop_adapter | OAuth credentials (from .env) | Typed WhoopDailyPayload model | Unit — MockWhoopAdapter substitutes RealWhoopAdapter behind shared interface; token refresh tested against both |
 | strava_adapter | OAuth credentials, Activity ID | Typed StravaActivity model | Unit — MockStravaAdapter substitutes RealStravaAdapter behind shared interface; pagination tested against both |
-| ollama_adapter | Structured JSON decision output | Natural language explanation string | Unit — MockOllamaAdapter simulates all 4 documented failure modes; live call retained as manual smoke test only, skipped in CI |
+| ollama_adapter | Structured JSON decision output | ExplanationResult (see docs/adr/0010) | Unit — MockOllamaAdapter simulates all 4 documented failure modes; live call retained as manual smoke test only, skipped in CI |
 | token_repository | Typed OAuth token model instances | DB read/write confirmation | Integration — in-memory SQLite per test |
 | metrics_repository | Typed daily_metrics / hr_zones / activities / session_scores model instances | DB read/write confirmation or query results | Integration — in-memory SQLite per test |
 | plan_repository | Typed weekly_plans / monthly_targets / decisions model instances | DB read/write confirmation or query results | Integration — in-memory SQLite per test |
