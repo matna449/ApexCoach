@@ -359,7 +359,7 @@ Lists the athlete's recent activities. Called on each sync to detect new session
 | **Auth Header** | Authorization: Bearer {access_token} |
 | **Query Params** | after={last_sync_unix_ts}&per_page=30&page=1 |
 | **Adapter Method** | strava_adapter.get_new_activities(since_ts) -\> list\[StravaActivity\] |
-| **Deduplication** | strava_id is UNIQUE in activities table. INSERT OR IGNORE on sync. |
+| **Deduplication** | strava_id is UNIQUE in activities table. Upsert on sync (INSERT ... ON CONFLICT DO UPDATE), not INSERT OR IGNORE — resyncs correct data (e.g. Strava-side fixes to avg HR), and rpe is excluded from the update set so it's never clobbered. See docs/adr/0006. |
 
 #### Mock Payload — Single Activity
 
