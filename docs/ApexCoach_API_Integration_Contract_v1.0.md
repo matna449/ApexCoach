@@ -351,7 +351,7 @@ refresh_token. Always overwrite the stored token immediately.
 
 ### 3.2 Endpoint: GET /v3/athlete/activities
 
-Lists the athlete's recent activities. Called on each sync to detect new sessions since the last stored Strava ID. Uses the after parameter to fetch only new activities — never re-fetches what is already stored.
+Lists the athlete's recent activities. Called on each sync to detect new sessions since the last stored Strava ID. Uses the after parameter to minimise redundant fetches — but a strava_id can still reappear (e.g. a Strava-side edit within the polling window), which is exactly why sync upserts rather than assumes no overlap. See Deduplication below.
 
 |  |  |
 |----|----|

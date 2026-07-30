@@ -57,6 +57,12 @@ class MockStravaAdapter:
                 # an API error.
                 payload = {"id": "not-an-int", "name": "bad activity"}
 
-            return [StravaActivity(**payload)]
+            activity = StravaActivity(**payload)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e
+
+        # Mirrors the real after={since_ts} query param (§3.2) — activities
+        # at or before since_ts are already synced, not "new".
+        if activity.start_date.timestamp() <= since_ts:
+            return []
+        return [activity]

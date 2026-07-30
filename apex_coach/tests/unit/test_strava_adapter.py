@@ -52,3 +52,21 @@ def test_malformed_payload_raises_adapter_malformed_response_error():
 
     with pytest.raises(AdapterMalformedResponseError):
         adapter.get_new_activities(since_ts=0)
+
+
+def test_since_ts_after_activity_returns_no_activities():
+    adapter = MockStravaAdapter()
+
+    # Mock activity starts 2026-06-23T06:30:00Z; anything after that should
+    # be treated as already synced, matching the real `after` query param.
+    activities = adapter.get_new_activities(since_ts=9999999999)
+
+    assert activities == []
+
+
+def test_since_ts_before_activity_returns_the_activity():
+    adapter = MockStravaAdapter()
+
+    activities = adapter.get_new_activities(since_ts=0)
+
+    assert len(activities) == 1

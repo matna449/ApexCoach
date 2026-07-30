@@ -68,7 +68,8 @@ def strava_smoke(since_ts: int):
         click.echo(f"{activity.name} ({activity.type})")
         click.echo(f"  Distance: {activity.distance} m")
         click.echo(f"  Duration: {activity.elapsed_time} s")
-        click.echo(f"  Avg HR: {activity.average_heartrate} bpm")
+        hr = activity.average_heartrate
+        click.echo(f"  Avg HR: {hr} bpm" if hr is not None else "  Avg HR: n/a")
         pace = activity.pace_sec_per_km
         click.echo(f"  Pace: {pace:.1f} sec/km" if pace is not None else "  Pace: n/a")
         click.echo(f"  Elevation gain: {activity.total_elevation_gain} m")
