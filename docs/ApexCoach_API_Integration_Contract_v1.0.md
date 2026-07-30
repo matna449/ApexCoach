@@ -86,12 +86,12 @@ STEP 5 — TOKEN REFRESH (automatic, every run)
 
 Fetches the most recent recovery record. Called once per morning run. Returns recovery score, HRV, RHR, and sleep performance for the latest completed sleep cycle.
 
-|                    |                                                       |
-|--------------------|-------------------------------------------------------|
-| **Endpoint**       | GET /v1/recovery                                      |
-| **Auth Header**    | Authorization: Bearer {access_token}                  |
-| **Query Params**   | limit=1 (fetch latest only)                           |
-| **Adapter Method** | whoop_adapter.get_latest_recovery() -\> WhoopRecovery |
+|  |  |
+|----|----|
+| **Endpoint** | GET /v1/recovery |
+| **Auth Header** | Authorization: Bearer {access_token} |
+| **Query Params** | limit=1 (fetch latest only) |
+| **Adapter Method** | whoop_adapter.get_latest_recovery() -\> WhoopRecovery — internal only, see §2.5 / docs/adr/0011 |
 
 #### Mock Payload — GET /v1/recovery
 
@@ -146,12 +146,12 @@ class WhoopRecovery(BaseModel):
 
 Fetches the current day's strain cycle. Called after each session to capture accumulated strain. Also provides the day's overall strain context for the weekly engine.
 
-|                    |                                                 |
-|--------------------|-------------------------------------------------|
-| **Endpoint**       | GET /v1/cycle                                   |
-| **Auth Header**    | Authorization: Bearer {access_token}            |
-| **Query Params**   | limit=1                                         |
-| **Adapter Method** | whoop_adapter.get_latest_cycle() -\> WhoopCycle |
+|  |  |
+|----|----|
+| **Endpoint** | GET /v1/cycle |
+| **Auth Header** | Authorization: Bearer {access_token} |
+| **Query Params** | limit=1 |
+| **Adapter Method** | whoop_adapter.get_latest_cycle() -\> WhoopCycle — internal only, see §2.5 / docs/adr/0011 |
 
 #### Mock Payload — GET /v1/cycle
 
@@ -177,6 +177,26 @@ Fetches the current day's strain cycle. Called after each session to capture acc
   ],
   "next_token": null
 }
+```
+
+```
+class WhoopCycleScore(BaseModel):
+    strain:             float          # 0.0-21.0. Day strain accumulated so far.
+    kilojoule:          float
+    average_heart_rate: int
+    max_heart_rate:     int
+
+class WhoopCycle(BaseModel):
+    id:          int
+    created_at:  datetime
+    score_state: Literal['SCORED', 'PENDING_SCORE', 'UNSCORABLE']
+    score:       WhoopCycleScore | None = None
+
+    @validator('score_state')
+    def must_be_scored(cls, v):
+        if v != 'SCORED':
+            raise ValueError(f'Cycle not yet scored: {v}')
+        return v
 ```
 
 ### 2.4 Endpoint: GET /v1/activity/sleep
@@ -215,6 +235,64 @@ Fetches the latest sleep record for sleep stage breakdown and total sleep hours.
     }
   ]
 }
+```
+
+```
+class WhoopSleepScore(BaseModel):
+    sleep_performance_percentage: float
+    total_in_bed_time_milli:      int
+    total_awake_time_milli:       int
+
+    @property
+    def total_sleep_hours(self) -> float:
+        asleep_milli = self.total_in_bed_time_milli - self.total_awake_time_milli
+        return asleep_milli / 1000 / 60 / 60
+
+class WhoopSleep(BaseModel):
+    id:          int
+    created_at:  datetime
+    score_state: Literal['SCORED', 'PENDING_SCORE', 'UNSCORABLE']
+    score:       WhoopSleepScore | None = None
+
+    @validator('score_state')
+    def must_be_scored(cls, v):
+        if v != 'SCORED':
+            raise ValueError(f'Sleep not yet scored: {v}')
+        return v
+```
+
+### 2.5 Combined Model — WhoopDailyPayload
+
+whoop_adapter's public method combines all 3 endpoints above into one typed payload per day — see docs/adr/0011. The per-endpoint methods (get_latest_recovery, get_latest_cycle, get_latest_sleep) are internal; callers use get_daily_payload() only.
+
+#### Pydantic Model — WhoopDailyPayload
+
+```
+class WhoopDailyPayload(BaseModel):
+    date:                str            # ISO 8601 date this payload covers
+    recovery:            WhoopRecovery
+    cycle:               WhoopCycle
+    sleep:               WhoopSleep
+
+    @property
+    def recovery_pct(self) -> float | None:
+        return self.recovery.score.recovery_score if self.recovery.score else None
+
+    @property
+    def hrv_ms(self) -> float | None:
+        return self.recovery.score.hrv_rmssd_milli if self.recovery.score else None
+
+    @property
+    def rhr_bpm(self) -> float | None:
+        return self.recovery.score.resting_heart_rate if self.recovery.score else None
+
+    @property
+    def strain(self) -> float | None:
+        return self.cycle.score.strain if self.cycle.score else None
+
+    @property
+    def sleep_hours(self) -> float | None:
+        return self.sleep.score.total_sleep_hours if self.sleep.score else None
 ```
 
 ## 3. Strava API

@@ -1,7 +1,10 @@
 """CLI entry point — command group. See docs/adr/0008."""
 
+from datetime import datetime, timezone
+
 import click
 
+from apex_coach.adapters.whoop_adapter import MockWhoopAdapter
 from apex_coach.services.zone_calculator import calculate_zones
 
 ZONE_LABELS = {
@@ -26,6 +29,26 @@ def zones(max_hr: int, resting_hr: int):
     zone_boundaries = calculate_zones(max_hr, resting_hr)
     for zone_name, (lower, upper) in zone_boundaries.items():
         click.echo(f"{ZONE_LABELS[zone_name]}: {lower}-{upper} bpm")
+
+
+@cli.command(name="whoop-smoke")
+@click.option(
+    "--date",
+    default=None,
+    help="ISO 8601 date to fetch (defaults to today, UTC).",
+)
+def whoop_smoke(date: str | None):
+    """Fetch (mock) today's WHOOP recovery payload and print it. No network calls."""
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+
+    adapter = MockWhoopAdapter()
+    payload = adapter.get_daily_payload(date)
+
+    click.echo(f"Recovery: {payload.recovery_pct}%")
+    click.echo(f"HRV: {payload.hrv_ms} ms")
+    click.echo(f"RHR: {payload.rhr_bpm} bpm")
+    click.echo(f"Strain: {payload.strain}")
 
 
 if __name__ == "__main__":
