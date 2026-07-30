@@ -314,6 +314,7 @@ One row per training month. Defines targets at block start, tracks actuals acros
 | race_date | TEXT |  | Target race date if applicable. NULL otherwise. |
 | month_summary_json | TEXT |  | JSON summary generated at month close: execution quality averages, load delta, notable patterns. |
 | created_at | TEXT |  | UTC timestamp. |
+| updated_at | TEXT |  | UTC timestamp of last update. |
 
 ## 5. Key Algorithms & Calculation Specs
 

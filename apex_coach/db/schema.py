@@ -181,6 +181,7 @@ monthly_targets = sa.Table(
     sa.Column("race_date", sa.String, nullable=True),
     sa.Column("month_summary_json", sa.Text, nullable=True),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
+    sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
 )
 
 # API Integration Contract §5 — separate from the SDD's main schema, but
