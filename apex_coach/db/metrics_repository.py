@@ -3,14 +3,18 @@
 hr_zones and session_scores are append-only. activities is a documented
 exception — upsert on strava_id (dedup-on-sync) plus a targeted RPE update
 (athlete input arrives after the Strava-sync row already exists).
-daily_metrics is append-only per date but supports a targeted update:
+daily_metrics is append-only per date but supports a targeted upsert:
 WHOOP fetch and the morning health check are independent writers that
-populate different columns of the same day's row (ADR-0012).
+populate different columns of the same day's row (ADR-0012). Upsert
+(single atomic statement), not read-then-insert-or-update — two writers
+racing a check-then-act would both see no row and both attempt insert.
 """
 
 import sqlalchemy as sa
 
 from apex_coach.db.schema import activities, daily_metrics, hr_zones, session_scores
+
+_DAILY_METRICS_IMMUTABLE_FIELDS = {"id", "date", "created_at"}
 
 
 def _row_to_dict(row) -> dict:
@@ -30,15 +34,21 @@ class MetricsRepository:
             )
             return result.scalar_one()
 
-    def update_daily_metrics(self, date: str, **fields) -> None:
+    def upsert_daily_metrics(self, date: str, **fields) -> None:
+        if not fields:
+            raise ValueError("upsert_daily_metrics requires at least one field to set")
+        invalid = _DAILY_METRICS_IMMUTABLE_FIELDS & fields.keys()
+        if invalid:
+            raise ValueError(f"cannot set immutable field(s): {sorted(invalid)}")
+
+        stmt = sa.dialects.sqlite.insert(daily_metrics).values(date=date, **fields)
+        update_columns = {name: stmt.excluded[name] for name in fields}
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[daily_metrics.c.date],
+            set_=update_columns,
+        )
         with self._engine.begin() as conn:
-            result = conn.execute(
-                daily_metrics.update()
-                .where(daily_metrics.c.date == date)
-                .values(**fields)
-            )
-            if result.rowcount == 0:
-                raise ValueError(f"no daily_metrics row for date {date!r}")
+            conn.execute(stmt)
 
     def get_daily_metrics(self, date: str) -> dict | None:
         with self._engine.begin() as conn:

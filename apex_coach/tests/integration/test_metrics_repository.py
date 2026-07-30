@@ -37,19 +37,33 @@ def test_insert_daily_metrics_rejects_duplicate_date(repo):
         repo.insert_daily_metrics(date="2026-07-30")
 
 
-def test_update_daily_metrics_fills_in_columns_from_a_second_writer(repo):
+def test_upsert_daily_metrics_inserts_when_no_row_exists(repo):
+    repo.upsert_daily_metrics("2026-07-30", muscle_soreness=3)
+
+    row = repo.get_daily_metrics("2026-07-30")
+    assert row["muscle_soreness"] == 3
+
+
+def test_upsert_daily_metrics_fills_in_columns_from_a_second_writer(repo):
     repo.insert_daily_metrics(date="2026-07-30", whoop_recovery_pct=72.0)
 
-    repo.update_daily_metrics(date="2026-07-30", muscle_soreness=3)
+    repo.upsert_daily_metrics("2026-07-30", muscle_soreness=3)
 
     row = repo.get_daily_metrics("2026-07-30")
     assert row["whoop_recovery_pct"] == 72.0
     assert row["muscle_soreness"] == 3
 
 
-def test_update_daily_metrics_raises_for_unknown_date(repo):
+def test_upsert_daily_metrics_rejects_empty_fields(repo):
     with pytest.raises(ValueError):
-        repo.update_daily_metrics(date="2026-01-01", muscle_soreness=3)
+        repo.upsert_daily_metrics("2026-07-30")
+
+
+def test_upsert_daily_metrics_rejects_immutable_fields(repo):
+    with pytest.raises(ValueError):
+        repo.upsert_daily_metrics("2026-07-30", id="some-id")
+    with pytest.raises(ValueError):
+        repo.upsert_daily_metrics("2026-07-30", created_at="2026-01-01T00:00:00")
 
 
 def test_get_daily_metrics_range_is_inclusive_and_ordered(repo):

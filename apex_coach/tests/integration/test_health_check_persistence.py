@@ -1,7 +1,6 @@
 import json
 
 import pytest
-import sqlalchemy as sa
 
 from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
@@ -59,7 +58,7 @@ def test_persist_health_check_running_first_then_whoop_update_both_succeed(repo)
     persist_health_check(repo, "2026-07-30", result)
 
     # Simulates WHOOP fetch running second, updating the same row.
-    repo.update_daily_metrics("2026-07-30", whoop_recovery_pct=62.0)
+    repo.upsert_daily_metrics("2026-07-30", whoop_recovery_pct=62.0)
 
     row = repo.get_daily_metrics("2026-07-30")
     assert row["muscle_soreness"] == 3

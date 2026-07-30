@@ -22,6 +22,13 @@ FIXED_QUESTIONS = (
     ("sleep_quality_felt", "How was your sleep quality last night?"),
 )
 
+FIXED_QUESTION_KEYS = {key for key, _ in FIXED_QUESTIONS}
+
+
+def _validate_score(key: str, score: object) -> None:
+    if not isinstance(score, int) or isinstance(score, bool) or not (1 <= score <= 5):
+        raise ValueError(f"{key} must be an integer 1-5, got {score!r}")
+
 
 @dataclass(frozen=True)
 class AdaptiveQuestion:
@@ -151,10 +158,24 @@ def evaluate_health_check(
     """Score a collected set of answers. Pure — no I/O."""
     questions = get_adaptive_questions(session_type)
 
+    missing_fixed = FIXED_QUESTION_KEYS - fixed_answers.keys()
+    if missing_fixed:
+        raise ValueError(f"missing fixed answer(s): {sorted(missing_fixed)}")
+    for key in FIXED_QUESTION_KEYS:
+        _validate_score(key, fixed_answers[key])
+
+    adaptive_keys = {q.key for q in questions}
+    missing_adaptive = adaptive_keys - adaptive_answers.keys()
+    if missing_adaptive:
+        raise ValueError(
+            f"missing adaptive answer(s) for {session_type}: {sorted(missing_adaptive)}"
+        )
+
     adaptive_results = {}
     override_reasons = []
     for q in questions:
         score = adaptive_answers[q.key]
+        _validate_score(q.key, score)
         flag = _evaluate_flag(q, score)
         adaptive_results[q.key] = {"score": score, "flag": flag}
         if q.direction == "high_bad" and score >= OVERRIDE_THRESHOLD:
@@ -170,7 +191,12 @@ def evaluate_health_check(
 
 
 def persist_health_check(repo, date: str, result: dict) -> None:
-    """Insert or update daily_metrics for `date` — see docs/adr/0012."""
+    """Upsert daily_metrics for `date` — see docs/adr/0012.
+
+    Atomic upsert, not read-then-insert-or-update: two independent writers
+    (WHOOP fetch, health check) could otherwise both see no row for `date`
+    and both attempt an insert, racing on the UNIQUE(date) constraint.
+    """
     fields = {
         "muscle_soreness": result["fixed_answers"]["muscle_soreness"],
         "subjective_energy": result["fixed_answers"]["subjective_energy"],
@@ -185,7 +211,4 @@ def persist_health_check(repo, date: str, result: dict) -> None:
         ),
     }
 
-    if repo.get_daily_metrics(date) is None:
-        repo.insert_daily_metrics(date=date, **fields)
-    else:
-        repo.update_daily_metrics(date, **fields)
+    repo.upsert_daily_metrics(date, **fields)

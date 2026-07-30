@@ -118,3 +118,33 @@ def test_fixed_answers_are_passed_through_unchanged():
     result = evaluate_health_check("Rest", FIXED_ANSWERS, {"general_wellbeing": 4})
 
     assert result["fixed_answers"] == FIXED_ANSWERS
+
+
+# -- input validation -------------------------------------------------------
+
+
+def test_missing_fixed_answer_raises_value_error():
+    incomplete = {"muscle_soreness": 2, "subjective_energy": 4}
+    with pytest.raises(ValueError):
+        evaluate_health_check("Rest", incomplete, {"general_wellbeing": 4})
+
+
+def test_missing_adaptive_answer_raises_value_error():
+    with pytest.raises(ValueError):
+        evaluate_health_check("HIIT", FIXED_ANSWERS, {"left_knee_pain": 1})
+
+
+def test_out_of_range_fixed_score_raises_value_error():
+    bad = {**FIXED_ANSWERS, "muscle_soreness": 0}
+    with pytest.raises(ValueError):
+        evaluate_health_check("Rest", bad, {"general_wellbeing": 4})
+
+
+def test_out_of_range_adaptive_score_raises_value_error():
+    with pytest.raises(ValueError):
+        evaluate_health_check("Rest", FIXED_ANSWERS, {"general_wellbeing": 6})
+
+
+def test_non_integer_score_raises_value_error():
+    with pytest.raises(ValueError):
+        evaluate_health_check("Rest", FIXED_ANSWERS, {"general_wellbeing": "high"})
