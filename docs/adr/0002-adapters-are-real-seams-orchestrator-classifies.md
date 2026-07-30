@@ -1,0 +1,11 @@
+---
+status: accepted
+---
+
+# Adapters are real seams; the Orchestrator classifies before engines see raw data
+
+A pre-implementation architecture review (2026-07-30) found that SDD §3.2 documented `whoop_adapter`/`strava_adapter` as swapped only via httpx-level mocking, not as a second concrete implementation behind a shared interface — a hypothetical seam, not a real one (one adapter = hypothetical seam, two adapters = real seam). The same review found `ollama_adapter`'s only documented test strategy was a single live call skipped in CI, unable to exercise the four distinct failure modes API Contract §6.3 requires graceful degradation for. Separately, `daily_engine`'s documented input was the raw WHOOP payload, not the classified domain types `CONTEXT.md` already names (Recovery Band, HRV Delta, Soreness Band) — meaning provider-shaped data was implicitly expected to leak into engine logic, or classification would get duplicated per-engine.
+
+We're deciding both together because they're the same design move: every adapter (WHOOP, Strava, Ollama) exposes one shared interface with two concrete implementations — Real and Mock — injected at construction, so mocking happens at the interface, not the transport. `MockOllamaAdapter` specifically simulates each of the four documented failure modes deterministically, replacing reliance on the skipped-in-CI live test for that coverage; the live call remains as a manual smoke test only. And the raw→classified translation (provider payload → Recovery Band / HRV Delta / Soreness Band) happens exactly once, in the Orchestrator, immediately after adapter calls — engines only ever receive classified domain types, never provider-shaped ones. This was the missing responsibility behind Orchestrator's absence from the §3.2 Module Contracts table.
+
+Alternative considered: classify inside each adapter instead of the Orchestrator. Rejected because WHOOP and Strava feed different classifications (recovery/HRV signals vs. session execution data) that both depend on same-day context (e.g. `hrv_30d_avg_ms`) the Orchestrator already has to assemble across adapters — duplicating that assembly into each adapter would break the "one place" locality principle SDD §7.2 already commits to for the repository layer.

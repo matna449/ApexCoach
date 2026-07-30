@@ -25,7 +25,7 @@
 
 - LLM at the edge. Ollama receives structured JSON and returns natural language. It explains outputs; it does not produce them.
 
-- Adapter pattern for all external APIs. WHOOP and Strava are accessed only through adapter classes. Swapping an API or mocking it for tests requires changing one file.
+- Adapter pattern for all external APIs. WHOOP, Strava, and Ollama are accessed only through adapter classes, each with two concrete implementations — Real and Mock — behind a shared interface, injected at construction. Swapping an API or mocking it for tests requires changing one file, not the transport layer.
 
 - Schema-first persistence. SQLite schema is designed with PostgreSQL constraints from day one. Promotion to Azure requires a data migration script, not a redesign.
 
@@ -131,7 +131,9 @@ apex_coach/
 ├── db/
 │   ├── schema.py                # SQLAlchemy Core table definitions
 │   ├── migrations/              # Version-controlled schema changes
-│   └── repository.py           # All DB reads/writes — no raw SQL outside this file
+│   ├── token_repository.py       # OAuth tokens — no raw SQL outside this file
+│   ├── metrics_repository.py     # daily_metrics / hr_zones / activities / session_scores — no raw SQL outside this file
+│   └── plan_repository.py        # weekly_plans / monthly_targets / decisions — no raw SQL outside this file
 ├── models/
 │   └── pydantic_models.py       # All typed data models (API payloads, configs, outputs)
 ├── config/
@@ -152,17 +154,21 @@ Each module exposes a defined interface. Internal implementation details are pri
 
 | **Module** | **Primary Input** | **Primary Output** | **Test Strategy** |
 |----|----|----|----|
+| cli | Command-line arguments (argparse/Click) | stdout recommendation/report, exit code | Integration — full CLI run against mocked Orchestrator |
+| orchestrator | Adapter outputs (raw typed payloads: WhoopDailyPayload, StravaActivity), engine outputs | Classified inputs per engine (Recovery Band, HRV Delta, Soreness Band); enforces monthly → weekly → daily authority | Integration — verify call ordering, raw→classified translation, and that no engine can override a higher-horizon constraint |
 | zone_calculator | Max HR (int), Resting HR (int) | Dict of 5 zone boundaries (bpm) | Unit — parametrised with known HR values |
 | load_calculator | Distance (m), Duration (s), Elevation (m), Avg HR (bpm) | Load score (float), Grade-adjusted pace (float) | Unit — parametrised with flat vs hilly runs |
-| session_scorer | Strava activity JSON, Intended zone label, RPE (int) | Execution score (0–100), Flags (overpush / underpush) | Integration — inject mock Strava payloads |
+| session_scorer | Strava activity JSON, Intended zone label, RPE (int), planned_load_au (from weekly_engine / training plan) | Execution score (0–100), Flags (overpush / underpush) | Integration — inject mock Strava payloads |
 | health_check | Yesterday's session type (str), Previous check data | Dict of scored health check responses | Unit — adaptive question logic tested per session type |
-| daily_engine | WHOOP payload, Health check scores, Training plan entry | Decision enum + rationale dict | Unit — full decision matrix (all Recovery x Soreness x Session permutations) |
+| daily_engine | Classified inputs from Orchestrator (Recovery Band, HRV Delta, Soreness Band), Health check scores, Training plan entry | Decision enum + rationale dict | Unit — full decision matrix (all Recovery x Soreness x Session permutations) |
 | weekly_engine | Weekly session log, Monthly target, WHOOP 7-day trend | Adapted weekly plan diff | Integration — simulate skipped sessions, verify rescheduling |
 | monthly_engine | Session scores (all), Load targets, Race calendar | Monthly summary, Load forecast, Phase recommendation | Integration — simulate full training block |
-| whoop_adapter | OAuth credentials (from .env) | Typed WhoopDailyPayload model | Unit — mock httpx, test token refresh |
-| strava_adapter | OAuth credentials, Activity ID | Typed StravaActivity model | Unit — mock httpx, test pagination |
-| ollama_adapter | Structured JSON decision output | Natural language explanation string | Integration — live Ollama call (skipped in CI) |
-| repository | Typed model instances | DB read/write confirmation or query results | Integration — in-memory SQLite per test |
+| whoop_adapter | OAuth credentials (from .env) | Typed WhoopDailyPayload model | Unit — MockWhoopAdapter substitutes RealWhoopAdapter behind shared interface; token refresh tested against both |
+| strava_adapter | OAuth credentials, Activity ID | Typed StravaActivity model | Unit — MockStravaAdapter substitutes RealStravaAdapter behind shared interface; pagination tested against both |
+| ollama_adapter | Structured JSON decision output | Natural language explanation string | Unit — MockOllamaAdapter simulates all 4 documented failure modes; live call retained as manual smoke test only, skipped in CI |
+| token_repository | Typed OAuth token model instances | DB read/write confirmation | Integration — in-memory SQLite per test |
+| metrics_repository | Typed daily_metrics / hr_zones / activities / session_scores model instances | DB read/write confirmation or query results | Integration — in-memory SQLite per test |
+| plan_repository | Typed weekly_plans / monthly_targets / decisions model instances | DB read/write confirmation or query results | Integration — in-memory SQLite per test |
 
 ## 4. SQLite Data Schema
 
@@ -490,11 +496,11 @@ The full Test Strategy Document is a separate deliverable. This section records 
 
 - All decision engine functions are pure functions: same inputs always produce same outputs. No internal state, no DB calls inside engine logic.
 
-- The repository layer is the only place that writes to the DB. Integration tests use an in-memory SQLite instance created fresh per test.
+- Each repository module (token_repository, metrics_repository, plan_repository) is the only place that writes to its own tables — no raw SQL elsewhere. Integration tests use an in-memory SQLite instance created fresh per test.
 
 - Mock JSON fixtures for WHOOP and Strava payloads live in tests/fixtures/. These are the single source of truth for offline testing.
 
-- The Ollama adapter integration test is marked with a custom @pytest.mark.live_llm marker and is skipped in CI. It runs manually to verify the explanation layer.
+- The four documented Ollama failure modes (connection refused, model not found, timeout, malformed output) are unit-tested via MockOllamaAdapter, which simulates each deterministically. The one live-call integration test is marked with a custom @pytest.mark.live_llm marker and is skipped in CI — it runs manually only as a smoke test, not as failure-mode coverage.
 
 - Code coverage target: 80% minimum on all modules in engines/ and services/. Enforced by pytest-cov with a --fail-under=80 flag in CI.
 
