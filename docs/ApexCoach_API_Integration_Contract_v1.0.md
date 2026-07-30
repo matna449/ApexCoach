@@ -238,14 +238,18 @@ Fetches the latest sleep record for sleep stage breakdown and total sleep hours.
 ```
 
 ```
+class WhoopSleepStageSummary(BaseModel):
+    total_in_bed_time_milli: int
+    total_awake_time_milli:  int
+
 class WhoopSleepScore(BaseModel):
     sleep_performance_percentage: float
-    total_in_bed_time_milli:      int
-    total_awake_time_milli:       int
+    stage_summary:                WhoopSleepStageSummary
 
     @property
     def total_sleep_hours(self) -> float:
-        asleep_milli = self.total_in_bed_time_milli - self.total_awake_time_milli
+        asleep_milli = (self.stage_summary.total_in_bed_time_milli
+                         - self.stage_summary.total_awake_time_milli)
         return asleep_milli / 1000 / 60 / 60
 
 class WhoopSleep(BaseModel):
@@ -275,23 +279,23 @@ class WhoopDailyPayload(BaseModel):
     sleep:               WhoopSleep
 
     @property
-    def recovery_pct(self) -> float | None:
+    def whoop_recovery_pct(self) -> float | None:
         return self.recovery.score.recovery_score if self.recovery.score else None
 
     @property
-    def hrv_ms(self) -> float | None:
+    def whoop_hrv_ms(self) -> float | None:
         return self.recovery.score.hrv_rmssd_milli if self.recovery.score else None
 
     @property
-    def rhr_bpm(self) -> float | None:
+    def whoop_rhr_bpm(self) -> float | None:
         return self.recovery.score.resting_heart_rate if self.recovery.score else None
 
     @property
-    def strain(self) -> float | None:
+    def whoop_strain(self) -> float | None:
         return self.cycle.score.strain if self.cycle.score else None
 
     @property
-    def sleep_hours(self) -> float | None:
+    def whoop_sleep_hours(self) -> float | None:
         return self.sleep.score.total_sleep_hours if self.sleep.score else None
 ```
 

@@ -48,8 +48,10 @@ MOCK_SLEEP_PAYLOAD = {
     "score_state": "SCORED",
     "score": {
         "sleep_performance_percentage": 81.0,
-        "total_in_bed_time_milli": 28200000,
-        "total_awake_time_milli": 1620000,
+        "stage_summary": {
+            "total_in_bed_time_milli": 28200000,
+            "total_awake_time_milli": 1620000,
+        },
     },
 }
 

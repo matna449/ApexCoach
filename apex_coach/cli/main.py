@@ -38,17 +38,17 @@ def zones(max_hr: int, resting_hr: int):
     help="ISO 8601 date to fetch (defaults to today, UTC).",
 )
 def whoop_smoke(date: str | None):
-    """Fetch (mock) today's WHOOP recovery payload and print it. No network calls."""
+    """Fetch (mock) today's WHOOP daily payload (recovery, cycle, sleep) and print it. No network calls."""
     if date is None:
         date = datetime.now(timezone.utc).date().isoformat()
 
     adapter = MockWhoopAdapter()
     payload = adapter.get_daily_payload(date)
 
-    click.echo(f"Recovery: {payload.recovery_pct}%")
-    click.echo(f"HRV: {payload.hrv_ms} ms")
-    click.echo(f"RHR: {payload.rhr_bpm} bpm")
-    click.echo(f"Strain: {payload.strain}")
+    click.echo(f"Recovery: {payload.whoop_recovery_pct}%")
+    click.echo(f"HRV: {payload.whoop_hrv_ms} ms")
+    click.echo(f"RHR: {payload.whoop_rhr_bpm} bpm")
+    click.echo(f"Strain: {payload.whoop_strain}")
 
 
 if __name__ == "__main__":
