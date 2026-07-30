@@ -623,15 +623,16 @@ def calculate_zones(max_hr: int, resting_hr: int) -> dict[str, tuple[int, int]]:
     '''
     Calculate 5 HR zones using Heart Rate Reserve (Karvonen) method.
     Returns dict with zone name -> (lower_bpm, upper_bpm) tuples.
+    Boundaries are rounded to the nearest bpm, not truncated — see docs/adr/0009.
     '''
     hrr = max_hr - resting_hr
 
     zones = {
-        'zone1': (resting_hr + int(0.50 * hrr), resting_hr + int(0.60 * hrr)),
-        'zone2': (resting_hr + int(0.60 * hrr), resting_hr + int(0.70 * hrr)),
-        'zone3': (resting_hr + int(0.70 * hrr), resting_hr + int(0.80 * hrr)),
-        'zone4': (resting_hr + int(0.80 * hrr), resting_hr + int(0.90 * hrr)),
-        'zone5': (resting_hr + int(0.90 * hrr), max_hr),
+        'zone1': (resting_hr + round(0.50 * hrr), resting_hr + round(0.60 * hrr)),
+        'zone2': (resting_hr + round(0.60 * hrr), resting_hr + round(0.70 * hrr)),
+        'zone3': (resting_hr + round(0.70 * hrr), resting_hr + round(0.80 * hrr)),
+        'zone4': (resting_hr + round(0.80 * hrr), resting_hr + round(0.90 * hrr)),
+        'zone5': (resting_hr + round(0.90 * hrr), max_hr),
     }
     return zones
 
@@ -656,12 +657,12 @@ Every test case below must have a corresponding pytest parametrize entry in test
 
 | **Max HR** | **Resting HR** | **Zone 2 (bpm)** | **Zone 4 (bpm)** | **Notes** |
 |----|----|----|----|----|
-| 192 | 48 | 134-149 | 163-178 | Reference case (your approx values) |
-| 185 | 52 | 134-148 | 159-174 | Slightly lower max HR |
-| 200 | 55 | 148-162 | 175-190 | High max HR, higher resting HR |
-| 192 | 40 | 135-150 | 164-179 | Low resting HR, very fit state |
-| 192 | 60 | 127-141 | 153-167 | High resting HR, fatigued state |
-| 180 | 55 | 118-131 | 143-156 | Low max HR athlete |
+| 192 | 48 | 134-149 | 163-178 | Reference case |
+| 185 | 52 | 132-145 | 158-172 | Slightly lower max HR |
+| 200 | 55 | 142-157 | 171-185 | High max HR, higher resting HR |
+| 192 | 40 | 131-146 | 162-177 | Low resting HR, very fit state |
+| 192 | 60 | 139-152 | 166-179 | High resting HR, fatigued state |
+| 180 | 55 | 130-143 | 155-167 | Low max HR athlete |
 
 ## 9. Document Control
 

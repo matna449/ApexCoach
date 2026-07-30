@@ -79,7 +79,7 @@ The following diagram shows all external actors and the system boundary. Everyth
 | **Layer** | **Technology** | **Version Target** | **Justification** |
 |----|----|----|----|
 | Language | Python | 3.11+ | Numeric libraries, first-class async, strong testing ecosystem. Promotes cleanly to FastAPI backend. |
-| CLI Interface | argparse / Click | latest | Simple, testable command-line interface. Zero frontend overhead for v1.0. |
+| CLI Interface | Click | 8.1+ | Simple, testable command-line interface as a command group (see docs/adr/0008). Zero frontend overhead for v1.0. |
 | HTTP Client | httpx | 0.27+ | Async-native, supports OAuth flows cleanly. Preferred over requests for future async promotion. |
 | Auth | authlib | 1.3+ | OAuth 2.0 PKCE flow handling, token storage and refresh. Reduces auth boilerplate significantly. |
 | Database | SQLite + aiosqlite | 3.x / 0.20 | File-based, zero-server, PostgreSQL-compatible DDL. aiosqlite for async queries. |
@@ -155,7 +155,7 @@ Each module exposes a defined interface. Internal implementation details are pri
 
 | **Module** | **Primary Input** | **Primary Output** | **Test Strategy** |
 |----|----|----|----|
-| cli | Command-line arguments (argparse/Click) | stdout recommendation/report, exit code | Integration — full CLI run against mocked Orchestrator |
+| cli | Command-line arguments (Click command group, per subcommand) | stdout recommendation/report, exit code | Integration — full CLI run against mocked Orchestrator |
 | orchestrator | Adapter outputs (raw typed payloads: WhoopDailyPayload, StravaActivity), engine outputs | Classified inputs per engine (Recovery Band, HRV Delta, Soreness Band); enforces monthly → weekly → daily authority | Integration — verify call ordering, raw→classified translation, and that no engine can override a higher-horizon constraint |
 | engine | DB path (from config/settings.py) | SQLAlchemy Engine with PRAGMA foreign_keys=ON wired via connect event listener | Integration — attempt an FK-violating insert, verify it is rejected |
 | zone_calculator | Max HR (int), Resting HR (int) | Dict of 5 zone boundaries (bpm) | Unit — parametrised with known HR values |
