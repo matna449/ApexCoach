@@ -130,6 +130,7 @@ apex_coach/
 │   └── ollama_adapter.py        # Ollama: structured prompt, JSON mode, streaming
 ├── db/
 │   ├── schema.py                # SQLAlchemy Core table definitions
+│   ├── engine.py                # create_engine() wrapper — fires PRAGMA foreign_keys=ON per connection
 │   ├── migrations/              # Version-controlled schema changes
 │   ├── token_repository.py       # OAuth tokens — no raw SQL outside this file
 │   ├── metrics_repository.py     # daily_metrics / hr_zones / activities / session_scores — no raw SQL outside this file
@@ -156,6 +157,7 @@ Each module exposes a defined interface. Internal implementation details are pri
 |----|----|----|----|
 | cli | Command-line arguments (argparse/Click) | stdout recommendation/report, exit code | Integration — full CLI run against mocked Orchestrator |
 | orchestrator | Adapter outputs (raw typed payloads: WhoopDailyPayload, StravaActivity), engine outputs | Classified inputs per engine (Recovery Band, HRV Delta, Soreness Band); enforces monthly → weekly → daily authority | Integration — verify call ordering, raw→classified translation, and that no engine can override a higher-horizon constraint |
+| engine | DB path (from config/settings.py) | SQLAlchemy Engine with PRAGMA foreign_keys=ON wired via connect event listener | Integration — attempt an FK-violating insert, verify it is rejected |
 | zone_calculator | Max HR (int), Resting HR (int) | Dict of 5 zone boundaries (bpm) | Unit — parametrised with known HR values |
 | load_calculator | Distance (m), Duration (s), Elevation (m), Avg HR (bpm) | Load score (float), Grade-adjusted pace (float) | Unit — parametrised with flat vs hilly runs |
 | session_scorer | Strava activity JSON, Intended zone label, RPE (int), planned_load_au (from weekly_engine / training plan) | Execution score (0–100), Flags (overpush / underpush) | Integration — inject mock Strava payloads |
@@ -260,8 +262,8 @@ One row per scored activity. Linked to activities. Stores execution quality brea
 | execution_score | REAL |  | Overall execution quality score (0.0–100.0). |
 | time_in_zone_pct | REAL |  | Percentage of session time spent in the intended HR zone. |
 | hr_drift_coeff | REAL |  | Cardiac drift coefficient. Measure of aerobic decoupling. |
-| overpush_flag | TEXT |  | TRUE / FALSE. Set when HR exceeds intended zone ceiling significantly. |
-| underpush_flag | TEXT |  | TRUE / FALSE. Set when HR fails to reach intended zone floor. |
+| overpush_flag | BOOLEAN |  | Set when HR exceeds intended zone ceiling significantly. |
+| underpush_flag | BOOLEAN |  | Set when HR fails to reach intended zone floor. |
 | score_breakdown_json | TEXT |  | JSON breakdown of all component scores for display and audit. |
 | created_at | TEXT |  | UTC timestamp. |
 
