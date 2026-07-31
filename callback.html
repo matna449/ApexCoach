@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ApexCoach — OAuth Callback</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 640px;
+    margin: 4rem auto;
+    padding: 0 1.5rem;
+    line-height: 1.5;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8e8; background: #16171a; }
+    code, .field { background: #232428 !important; border-color: #3a3b40 !important; }
+    a { color: #7ab7ff; }
+  }
+  h1 { font-size: 1.4rem; }
+  .field {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    margin: 0.75rem 0;
+  }
+  .field label { display: block; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.65; margin-bottom: 0.35rem; }
+  .field code { display: block; word-break: break-all; font-size: 0.95rem; user-select: all; }
+  .copy-btn {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: none;
+    cursor: pointer;
+  }
+  .error { border-color: #d33; }
+  .error label { color: #d33; opacity: 1; }
+  .hint { font-size: 0.9rem; opacity: 0.75; }
+</style>
+</head>
+<body>
+  <h1 id="heading">ApexCoach — authorization complete</h1>
+  <p id="intro" class="hint">Copy the value(s) below back into your terminal.</p>
+  <div id="fields"></div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const fieldsEl = document.getElementById("fields");
+    const headingEl = document.getElementById("heading");
+    const introEl = document.getElementById("intro");
+
+    function addField(labelText, value, isError) {
+      const wrap = document.createElement("div");
+      wrap.className = "field" + (isError ? " error" : "");
+      const label = document.createElement("label");
+      label.textContent = labelText;
+      const code = document.createElement("code");
+      code.id = "val-" + labelText.toLowerCase();
+      code.textContent = value;
+      wrap.appendChild(label);
+      wrap.appendChild(code);
+      fieldsEl.appendChild(wrap);
+    }
+
+    const error = params.get("error");
+    const code = params.get("code");
+    const state = params.get("state");
+
+    if (error) {
+      headingEl.textContent = "Authorization failed";
+      introEl.textContent = "The provider returned an error instead of an authorization code.";
+      addField("Error", error, true);
+      const desc = params.get("error_description");
+      if (desc) addField("Error description", desc, true);
+    } else if (code) {
+      addField("Code", code, false);
+      if (state) addField("State", state, false);
+      if (!state) {
+        introEl.textContent = "Copy the code below back into your terminal. No state parameter was present.";
+      }
+    } else {
+      headingEl.textContent = "Nothing to show";
+      introEl.textContent = "This page expects a code, state, or error in the URL query string — it wasn't opened as part of an OAuth redirect.";
+    }
+  </script>
+</body>
+</html>
