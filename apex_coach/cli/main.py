@@ -19,12 +19,19 @@ from apex_coach.adapters.whoop_adapter import (
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
+from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
 from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
 from apex_coach.services.load_calculator import calculate_load_au
 from apex_coach.services.session_scorer import persist_session_score, score_session
+from apex_coach.services.health_check import (
+    FIXED_QUESTIONS,
+    evaluate_health_check,
+    get_adaptive_questions,
+    persist_health_check,
+)
 from apex_coach.services.zone_calculator import calculate_zones
 
 ZONE_LABELS = {
@@ -38,12 +45,26 @@ ZONE_LABELS = {
 # score_session's vocabulary minus Rest — Rest has no structured activity to
 # sync (session_scorer.py §2.4/§6.1).
 SCORABLE_SESSION_TYPES = [
+# Canonical session-type vocabulary — must match the `today` command's
+# --session-type choices and what the decision/weekly engines expect.
+SESSION_TYPES = [
     "HIIT",
     "Threshold",
     "Zone2_Long",
     "Zone2_Short",
     "Strength",
     "Recovery",
+    "Rest",
+]
+
+WEEKDAYS = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
 ]
 
 
@@ -154,6 +175,7 @@ def whoop_smoke(date: str | None, real: bool):
     if date is None:
         date = datetime.now(timezone.utc).date().isoformat()
 
+    engine = None
     if real:
         settings = get_settings()
         if not settings.whoop_client_id or not settings.whoop_client_secret:
@@ -173,6 +195,17 @@ def whoop_smoke(date: str | None, real: bool):
     click.echo(f"HRV: {payload.whoop_hrv_ms} ms")
     click.echo(f"RHR: {payload.whoop_rhr_bpm} bpm")
     click.echo(f"Strain: {payload.whoop_strain}")
+
+    if real:
+        MetricsRepository(engine).upsert_daily_metrics(
+            date,
+            whoop_recovery_pct=payload.whoop_recovery_pct,
+            whoop_hrv_ms=payload.whoop_hrv_ms,
+            whoop_rhr_bpm=payload.whoop_rhr_bpm,
+            whoop_strain=payload.whoop_strain,
+            whoop_sleep_hours=payload.whoop_sleep_hours,
+        )
+        click.echo(f"Persisted to daily_metrics for {date}.")
 
 
 @cli.command(name="strava-smoke")
@@ -216,13 +249,56 @@ def strava_smoke(since_ts: int, real: bool):
         click.echo(f"  Elevation gain: {activity.total_elevation_gain} m")
 
 
+@cli.command(name="morning-check")
+@click.option(
+    "--session-type",
+    required=True,
+    type=click.Choice(SESSION_TYPES),
+    help="Today's planned session type — selects the adaptive question set.",
+)
+@click.option(
+    "--date",
+    default=None,
+    help="ISO 8601 date this check applies to (defaults to today, UTC).",
+)
+def morning_check(session_type: str, date: str | None):
+    """Interactive morning health check: ask the 3 fixed questions plus the
+    session type's adaptive questions, score the answers, and persist them
+    to daily_metrics (API Contract / docs/adr/0012)."""
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+
+    fixed_answers = {}
+    for key, text in FIXED_QUESTIONS:
+        fixed_answers[key] = click.prompt(text, type=click.IntRange(1, 5))
+
+    adaptive_answers = {}
+    for question in get_adaptive_questions(session_type):
+        adaptive_answers[question.key] = click.prompt(question.text, type=click.IntRange(1, 5))
+
+    result = evaluate_health_check(session_type, fixed_answers, adaptive_answers)
+
+    if result["override_triggered"]:
+        click.echo("Override triggered:")
+        for reason in result["override_reasons"]:
+            click.echo(f"  - {reason}")
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    repo = MetricsRepository(engine)
+    persist_health_check(repo, date, result)
+
+    if result["override_triggered"]:
+        click.echo(f"Health check for {date} saved — override noted above.")
+    else:
+        click.echo(f"Health check for {date} saved.")
+
+
 @cli.command()
 @click.option(
     "--session-type",
     required=True,
-    type=click.Choice(
-        ["HIIT", "Threshold", "Zone2_Long", "Zone2_Short", "Strength", "Recovery", "Rest"]
-    ),
+    type=click.Choice(SESSION_TYPES),
 )
 @click.option(
     "--recovery-band", required=True, type=click.Choice([b.value for b in RecoveryBand])
@@ -440,6 +516,98 @@ def sync_session(
         f" time_in_zone_pct={result['time_in_zone_pct']}"
         f" overpush={result['overpush_flag']} underpush={result['underpush_flag']}"
     )
+@cli.command(name="plan-week")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+@click.option("--monday", type=click.Choice(SESSION_TYPES))
+@click.option("--tuesday", type=click.Choice(SESSION_TYPES))
+@click.option("--wednesday", type=click.Choice(SESSION_TYPES))
+@click.option("--thursday", type=click.Choice(SESSION_TYPES))
+@click.option("--friday", type=click.Choice(SESSION_TYPES))
+@click.option("--saturday", type=click.Choice(SESSION_TYPES))
+@click.option("--sunday", type=click.Choice(SESSION_TYPES))
+@click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Print the currently stored plan for --week-start instead of writing one.",
+)
+def plan_week(
+    week_start: str,
+    monday: str | None,
+    tuesday: str | None,
+    wednesday: str | None,
+    thursday: str | None,
+    friday: str | None,
+    saturday: str | None,
+    sunday: str | None,
+    show: bool,
+):
+    """Write (or show) the upcoming week's planned sessions.
+
+    Persists to weekly_plans.planned_sessions_json as a JSON list of
+    {"day": <weekday name>, "session_type": <one of SESSION_TYPES>} dicts —
+    the same shape apex_coach.engines.weekly_engine already reads/writes.
+
+    Inserts a new weekly_plans row if --week-start hasn't been planned yet,
+    or overwrites planned_sessions_json in place if it has.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    if show:
+        week = plan_repo.get_weekly_plan(week_start)
+        if week is None:
+            raise click.ClickException(
+                f"no weekly plan stored for week_start_date {week_start!r}"
+            )
+        sessions = json.loads(week["planned_sessions_json"] or "[]")
+        if not sessions:
+            click.echo(f"No sessions planned for week starting {week_start}.")
+            return
+        click.echo(f"Plan for week starting {week_start}:")
+        for entry in sessions:
+            click.echo(f"  {entry['day']}: {entry['session_type']}")
+        return
+
+    day_values = {
+        "Monday": monday,
+        "Tuesday": tuesday,
+        "Wednesday": wednesday,
+        "Thursday": thursday,
+        "Friday": friday,
+        "Saturday": saturday,
+        "Sunday": sunday,
+    }
+    missing = [day for day in WEEKDAYS if day_values[day] is None]
+    if missing:
+        raise click.ClickException(
+            "missing --session-type for: " + ", ".join(d.lower() for d in missing)
+        )
+
+    planned_sessions = [
+        {"day": day, "session_type": day_values[day]} for day in WEEKDAYS
+    ]
+    planned_sessions_json = json.dumps(planned_sessions)
+
+    if plan_repo.get_weekly_plan(week_start) is None:
+        plan_repo.insert_weekly_plan(
+            week_start_date=week_start,
+            planned_sessions_json=planned_sessions_json,
+        )
+    else:
+        plan_repo.update_weekly_plan(
+            week_start,
+            planned_sessions_json=planned_sessions_json,
+        )
+
+    click.echo(f"Plan saved for week starting {week_start}:")
+    for entry in planned_sessions:
+        click.echo(f"  {entry['day']}: {entry['session_type']}")
 
 
 if __name__ == "__main__":
