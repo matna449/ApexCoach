@@ -1,8 +1,8 @@
 import pytest
 
 from apex_coach.adapters.errors import AdapterMalformedResponseError
-from apex_coach.adapters.strava_adapter import MockStravaAdapter
-from apex_coach.models.pydantic_models import StravaActivity
+from apex_coach.adapters.strava_adapter import MOCK_ACTIVITY_PAYLOAD, MockStravaAdapter
+from apex_coach.models.pydantic_models import StravaActivity, StravaStream
 
 
 def test_get_new_activities_returns_typed_activities_matching_mock_data():
@@ -70,3 +70,22 @@ def test_since_ts_before_activity_returns_the_activity():
     activities = adapter.get_new_activities(since_ts=0)
 
     assert len(activities) == 1
+
+
+# -- get_activity_stream — API Contract §3.3 --------------------------------
+
+
+def test_get_activity_stream_returns_typed_stream_for_known_activity():
+    adapter = MockStravaAdapter()
+
+    stream = adapter.get_activity_stream(MOCK_ACTIVITY_PAYLOAD["id"])
+
+    assert isinstance(stream, StravaStream)
+    assert len(stream.heartrate.data) == MOCK_ACTIVITY_PAYLOAD["elapsed_time"]
+    assert len(stream.heartrate.data) == len(stream.time.data) == len(stream.distance.data)
+
+
+def test_get_activity_stream_returns_none_for_unknown_activity():
+    adapter = MockStravaAdapter()
+
+    assert adapter.get_activity_stream(999999) is None

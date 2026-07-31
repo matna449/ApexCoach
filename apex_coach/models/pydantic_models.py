@@ -147,3 +147,16 @@ class StravaActivity(BaseModel):
         if self.distance > 0:
             return (self.total_elevation_gain / self.distance) * 100
         return 0.0
+
+
+class StravaStreamSeries(BaseModel):
+    data: list[float]
+    series_type: str
+    original_size: int
+    resolution: str | None = None
+
+
+class StravaStream(BaseModel):
+    heartrate: StravaStreamSeries
+    time: StravaStreamSeries
+    distance: StravaStreamSeries
