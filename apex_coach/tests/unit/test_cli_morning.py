@@ -49,8 +49,9 @@ def _decisions_for(db_path, date):
 
 
 # HIIT's 3 fixed + 3 adaptive (left_knee_pain, right_knee_pain,
-# shin_calf_tightness) questions, all low scores — no override.
-_HIIT_NO_OVERRIDE = "3\n2\n4\n1\n2\n2\n"
+# shin_calf_tightness) questions, all low scores — no override — followed
+# by an empty line declining the follow-up loop's first prompt.
+_HIIT_NO_OVERRIDE = "3\n2\n4\n1\n2\n2\n\n"
 
 
 def test_morning_full_chain_persists_and_prints_recommendation(tmp_path):
@@ -130,8 +131,9 @@ def test_morning_override_triggers_abort_and_persists_override_rationale(tmp_pat
     runner = CliRunner()
     _init_db(runner, db_path)
 
-    # HIIT: left_knee_pain=4 crosses the ABORT_STRENGTH_RUN/override threshold.
-    override_input = "3\n2\n4\n4\n2\n2\n"
+    # HIIT: left_knee_pain=4 crosses the ABORT_STRENGTH_RUN/override
+    # threshold, followed by an empty line declining the follow-up loop.
+    override_input = "3\n2\n4\n4\n2\n2\n\n"
     with patch.dict(os.environ, _env(db_path), clear=True):
         result = runner.invoke(
             cli,
@@ -173,6 +175,8 @@ def test_morning_prints_warn_banner_and_skips_second_row_when_ollama_degraded(tm
     assert "Recommendation:" in result.output
     assert "[WARN] [Ollama offline" in result.output
     assert "Explanation:" not in result.output
+    # No prior explanation to follow up on — the loop must not be offered.
+    assert "Ask a follow-up" not in result.output
 
     rows = _decisions_for(db_path, "2026-08-05")
     assert len(rows) == 1  # only the pre-Ollama row — decision itself wasn't lost
@@ -305,3 +309,53 @@ def test_morning_real_uses_real_whoop_and_ollama_adapters(tmp_path):
     engine = create_engine(str(db_path))
     row = MetricsRepository(engine).get_daily_metrics(date)
     assert row["whoop_hrv_ms"] == payload.whoop_hrv_ms
+
+
+def test_morning_followup_loop_answers_questions_until_empty_line(tmp_path):
+    db_path = tmp_path / "test.db"
+    runner = CliRunner()
+    _init_db(runner, db_path)
+
+    # Health check answers, then two follow-up questions, then an empty
+    # line to end the loop.
+    answer_input = "3\n2\n4\n1\n2\n2\nwhy?\nwhat if I do it anyway?\n\n"
+    with patch.dict(os.environ, _env(db_path), clear=True):
+        result = runner.invoke(
+            cli,
+            ["morning", "--date", "2026-08-05", "--session-type", "HIIT"],
+            input=answer_input,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert result.output.count("Ask a follow-up") == 3  # 2 answered + 1 declined
+    assert "Mock explanation for: followup: why?" in result.output
+    assert "Mock explanation for: followup: what if I do it anyway?" in result.output
+
+
+def test_morning_followup_degrades_gracefully_without_crashing(tmp_path):
+    db_path = tmp_path / "test.db"
+    runner = CliRunner()
+    _init_db(runner, db_path)
+
+    degraded_followup = ExplanationResult(
+        explanation=None,
+        degraded=True,
+        banner="[Ollama offline -- start with: ollama serve]",
+        severity="WARN",
+    )
+    answer_input = "3\n2\n4\n1\n2\n2\nwhy?\n\n"
+    with patch.dict(os.environ, _env(db_path), clear=True):
+        with patch("apex_coach.cli.main.MockOllamaAdapter") as MockAdapterClass:
+            MockAdapterClass.return_value.explain.return_value = ExplanationResult(
+                explanation="original explanation", degraded=False, banner=None, severity=None
+            )
+            MockAdapterClass.return_value.ask_followup.return_value = degraded_followup
+            result = runner.invoke(
+                cli,
+                ["morning", "--date", "2026-08-05", "--session-type", "HIIT"],
+                input=answer_input,
+            )
+
+    assert result.exit_code == 0, result.output
+    assert "Explanation: original explanation" in result.output
+    assert "[WARN] [Ollama offline" in result.output
