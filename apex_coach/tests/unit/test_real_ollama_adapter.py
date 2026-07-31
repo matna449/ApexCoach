@@ -39,7 +39,7 @@ def test_explain_sends_decision_context_as_user_message(httpx_mock):
 
     request = httpx_mock.get_requests()[0]
     payload = json.loads(request.read())
-    assert payload["model"] == "llama3.1:8b"
+    assert payload["model"] == "gemma4:latest"
     assert payload["stream"] is False
     assert payload["messages"][0]["role"] == "system"
     assert payload["messages"][1]["role"] == "user"
@@ -96,7 +96,7 @@ def test_model_not_found_degrades_with_warn_banner(httpx_mock):
 
     assert result.explanation is None
     assert result.degraded is True
-    assert result.banner == "[Run: ollama pull llama3.1:8b to enable explanations]"
+    assert result.banner == "[Run: ollama pull gemma4:latest to enable explanations]"
     assert result.severity == "WARN"
 
 
@@ -128,9 +128,9 @@ def test_response_missing_message_key_returns_raw_text_with_info_severity(httpx_
 @pytest.mark.live_llm
 def test_live_explain_then_followup_produces_coherent_answers():
     """SDD §7.2: the one live-call integration test — run manually with
-    --run-live-llm against a real `ollama serve` + `ollama pull llama3.1:8b`.
-    Not relied on for failure-mode coverage (that's the httpx_mock tests
-    above and MockOllamaAdapter's, F09.1)."""
+    --run-live-llm against a real `ollama serve` + `ollama pull gemma4:latest`
+    (docs/adr/0022). Not relied on for failure-mode coverage (that's the
+    httpx_mock tests above and MockOllamaAdapter's, F09.1)."""
     adapter = RealOllamaAdapter()
 
     result = adapter.explain(DECISION_CONTEXT)

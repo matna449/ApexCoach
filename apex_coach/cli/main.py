@@ -1,11 +1,13 @@
 """CLI entry point — command group. See docs/adr/0008."""
 
 import json
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
 
 import click
 
 from apex_coach.adapters.errors import AdapterError
+from apex_coach.adapters.ollama_adapter import MockOllamaAdapter, RealOllamaAdapter
 from apex_coach.adapters.strava_adapter import (
     MockStravaAdapter,
     RealStravaAdapter,
@@ -23,7 +25,13 @@ from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
-from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
+from apex_coach.orchestrator.orchestrator import (
+    HRVDeltaBand,
+    RecoveryBand,
+    SorenessBand,
+    classify_daily_inputs,
+)
+from apex_coach.services.hrv_trend import resolve_hrv_30d_avg_for_classification
 from apex_coach.services.load_calculator import calculate_load_au
 from apex_coach.services.session_scorer import persist_session_score, score_session
 from apex_coach.services.health_check import (
@@ -69,6 +77,20 @@ WEEKDAYS = [
     "Saturday",
     "Sunday",
 ]
+
+# Generic, session-type-level description for the Decision Context's
+# todays_plan.session_description (API Contract §4.3) — there's no per-day
+# structured workout description stored anywhere yet, so this is the
+# coarsest-grain text that's still accurate.
+SESSION_DESCRIPTIONS = {
+    "HIIT": "High-intensity intervals at Zone 5 HR.",
+    "Threshold": "Sustained tempo effort at Zone 4 HR.",
+    "Zone2_Long": "Long aerobic base session at Zone 2 HR.",
+    "Zone2_Short": "Short aerobic base session at Zone 2 HR.",
+    "Strength": "Strength training session (RPE-based, no HR target).",
+    "Recovery": "Active recovery — light movement at Zone 1 HR.",
+    "Rest": "Full rest day — no structured training.",
+}
 
 
 @click.group()
@@ -684,6 +706,277 @@ def set_monthly_target(
     else:
         repo.update_monthly_target(month_start_date, **fields)
         click.echo(f"Monthly target updated for {month_start_date}.")
+
+
+def _resolve_todays_session(plan_repo, date_str, session_type_flag):
+    """Find today's scheduled session in the current week's plan (#41's
+    planned_sessions_json), falling back to --session-type if no plan
+    covers this date at all (first-ever run, or the athlete hasn't
+    planned this week yet)."""
+    d = _date.fromisoformat(date_str)
+    week_start = (d - timedelta(days=d.weekday())).isoformat()
+    weekday_name = WEEKDAYS[d.weekday()]
+
+    week_plan = plan_repo.get_weekly_plan(week_start)
+    week_sessions = []
+    if week_plan and week_plan["planned_sessions_json"]:
+        week_sessions = json.loads(week_plan["planned_sessions_json"])
+
+    todays_entry = next((s for s in week_sessions if s["day"] == weekday_name), None)
+    if todays_entry is not None:
+        return todays_entry["session_type"], week_plan, week_sessions, weekday_name, week_start
+
+    if session_type_flag is not None:
+        return session_type_flag, week_plan, week_sessions, weekday_name, week_start
+
+    raise click.ClickException(
+        f"No weekly plan covers {weekday_name} of the week starting {week_start} — "
+        "run `plan-week` first, or pass --session-type as a fallback."
+    )
+
+
+def _tomorrow_session_type(week_sessions, weekday_name):
+    """Best-effort lookup for daily_engine's Recovery/Rest CNS-primer check.
+    Only resolvable when tomorrow falls in the same week's plan — Sunday's
+    "tomorrow" crosses into next week's (possibly not-yet-planned) row, so
+    that case is left as None rather than guessed at."""
+    idx = WEEKDAYS.index(weekday_name)
+    if idx == len(WEEKDAYS) - 1:
+        return None
+    tomorrow_name = WEEKDAYS[idx + 1]
+    entry = next((s for s in week_sessions if s["day"] == tomorrow_name), None)
+    return entry["session_type"] if entry else None
+
+
+def _sessions_remaining(week_sessions, weekday_name):
+    today_idx = WEEKDAYS.index(weekday_name)
+    remaining = []
+    for s in week_sessions:
+        idx = WEEKDAYS.index(s["day"])
+        if idx < today_idx:
+            continue
+        label = s["session_type"] + (" (today)" if idx == today_idx else "")
+        remaining.append(label)
+    return remaining
+
+
+def _resolve_athlete_context(plan_repo, date_str):
+    """training_phase/race_date/weeks_to_race from the month's monthly_target
+    (#48) — gracefully empty if the athlete hasn't set one up yet."""
+    d = _date.fromisoformat(date_str)
+    month_start = d.replace(day=1).isoformat()
+    target = plan_repo.get_monthly_target(month_start)
+    if target is None:
+        return {"training_phase": None, "race_date": None, "weeks_to_race": None}
+
+    race_date = target["race_date"]
+    weeks_to_race = None
+    if race_date:
+        weeks_to_race = max((_date.fromisoformat(race_date) - d).days // 7, 0)
+
+    return {
+        "training_phase": target["periodisation_phase"],
+        "race_date": race_date,
+        "weeks_to_race": weeks_to_race,
+    }
+
+
+@cli.command()
+@click.option(
+    "--date",
+    default=None,
+    help="ISO 8601 date to run for (defaults to today, UTC).",
+)
+@click.option(
+    "--session-type",
+    type=click.Choice(SESSION_TYPES),
+    default=None,
+    help="Fallback session type, only used if no weekly plan covers --date.",
+)
+@click.option(
+    "--real",
+    is_flag=True,
+    default=False,
+    help="Use RealWhoopAdapter + RealOllamaAdapter instead of the mocks.",
+)
+def morning(date: str | None, session_type: str | None, real: bool):
+    """The full morning routine (API Contract §4.3), tracer-bullet for
+    F01-F11.4: fetch WHOOP, persist it, resolve today's scheduled session
+    from the current week's plan, run the interactive health check,
+    compute the 30-day HRV baseline, classify, run the Daily Decision
+    Engine, persist the Decision Output, then call Ollama for a
+    natural-language explanation.
+
+    Mock WHOOP + Ollama by default (safe dry run, deterministic, no
+    network calls); --real hits the live WHOOP API and a local Ollama
+    instance.
+    """
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    metrics_repo = MetricsRepository(engine)
+    plan_repo = PlanRepository(engine)
+
+    # 1. Fetch real WHOOP data
+    if real:
+        if not settings.whoop_client_id or not settings.whoop_client_secret:
+            raise click.ClickException("WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET not set in .env.")
+        token_repo = TokenRepository(engine, settings.apex_encryption_key)
+        whoop_adapter = RealWhoopAdapter(
+            token_repo, settings.whoop_client_id, settings.whoop_client_secret
+        )
+    else:
+        whoop_adapter = MockWhoopAdapter()
+
+    try:
+        whoop_payload = whoop_adapter.get_daily_payload(date)
+    except AdapterError as e:
+        raise click.ClickException(str(e)) from e
+
+    # 2. Persist it (#43)
+    metrics_repo.upsert_daily_metrics(
+        date,
+        whoop_recovery_pct=whoop_payload.whoop_recovery_pct,
+        whoop_hrv_ms=whoop_payload.whoop_hrv_ms,
+        whoop_rhr_bpm=whoop_payload.whoop_rhr_bpm,
+        whoop_strain=whoop_payload.whoop_strain,
+        whoop_sleep_hours=whoop_payload.whoop_sleep_hours,
+    )
+
+    # 3. Look up today's scheduled session from the current week's plan (#41)
+    resolved_session_type, week_plan, week_sessions, weekday_name, week_start = (
+        _resolve_todays_session(plan_repo, date, session_type)
+    )
+
+    # 4. Run the interactive morning health check for that session type (#42)
+    fixed_answers = {}
+    for key, text in FIXED_QUESTIONS:
+        fixed_answers[key] = click.prompt(text, type=click.IntRange(1, 5))
+    adaptive_answers = {}
+    for question in get_adaptive_questions(resolved_session_type):
+        adaptive_answers[question.key] = click.prompt(question.text, type=click.IntRange(1, 5))
+
+    health_result = evaluate_health_check(resolved_session_type, fixed_answers, adaptive_answers)
+    if health_result["override_triggered"]:
+        click.echo("Override triggered:")
+        for reason in health_result["override_reasons"]:
+            click.echo(f"  - {reason}")
+    persist_health_check(metrics_repo, date, health_result)
+
+    # 5. Compute hrv_30d_avg_ms (#44)
+    hrv_30d_avg_ms = resolve_hrv_30d_avg_for_classification(
+        metrics_repo, date, whoop_payload.whoop_hrv_ms
+    )
+
+    # 6. Classify via orchestrator.classify_daily_inputs()
+    try:
+        classification = classify_daily_inputs(
+            whoop_payload, fixed_answers["muscle_soreness"], hrv_30d_avg_ms
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    # 7. Run daily_engine.make_decision()
+    tomorrow_session_type = _tomorrow_session_type(week_sessions, weekday_name)
+    decision_result = make_decision(
+        session_type=resolved_session_type,
+        recovery_band=classification["recovery_band"],
+        hrv_signal=classification["hrv_delta_band"],
+        soreness_band=classification["soreness_band"],
+        override_triggered=health_result["override_triggered"],
+        override_reasons=health_result["override_reasons"] or None,
+        tomorrow_session_type=tomorrow_session_type,
+    )
+
+    rationale_dict = {
+        "recovery_zone": (
+            f"{classification['recovery_band'].value} ({classification['recovery_pct']}%)"
+        ),
+        "hrv_signal": (
+            f"{classification['hrv_delta_band'].value} "
+            f"({classification['hrv_delta_ms']:+.1f}ms vs 30d avg)"
+        ),
+        "soreness_level": (
+            f"{classification['soreness_band'].value} ({fixed_answers['muscle_soreness']}/5)"
+        ),
+        "rule_applied": decision_result["rationale"] or "(no additional rationale)",
+    }
+
+    # 8. Persist the Decision Output via PlanRepository.insert_decision()
+    # BEFORE calling Ollama — a crash or Ollama failure must never lose the
+    # decision itself (ADR-0001: Ollama explains, never decides).
+    plan_repo.insert_decision(
+        date=date,
+        scheduled_session=resolved_session_type,
+        recommendation=decision_result["recommendation"],
+        rationale_json=json.dumps(rationale_dict),
+    )
+
+    # 9. Assemble the Decision Context (API Contract §4.3's exact shape)
+    # and call Ollama.
+    decision_context = {
+        "date": date,
+        "athlete_context": _resolve_athlete_context(plan_repo, date),
+        "todays_plan": {
+            "scheduled_session": resolved_session_type,
+            "session_description": SESSION_DESCRIPTIONS[resolved_session_type],
+        },
+        "biometrics": {
+            "whoop_recovery_pct": whoop_payload.whoop_recovery_pct,
+            "whoop_hrv_ms": whoop_payload.whoop_hrv_ms,
+            "hrv_30d_avg_ms": hrv_30d_avg_ms,
+            "hrv_delta_ms": classification["hrv_delta_ms"],
+            "hrv_signal": classification["hrv_delta_band"].value,
+            "whoop_rhr_bpm": whoop_payload.whoop_rhr_bpm,
+            "whoop_strain_so_far": whoop_payload.whoop_strain,
+        },
+        "morning_check": {
+            "muscle_soreness": fixed_answers["muscle_soreness"],
+            "subjective_energy": fixed_answers["subjective_energy"],
+            "sleep_quality_felt": fixed_answers["sleep_quality_felt"],
+            "adaptive_checks": adaptive_answers,
+        },
+        "decision": {
+            "recommendation": decision_result["recommendation"],
+            "rationale": rationale_dict,
+        },
+        "weekly_context": {
+            "week_status": week_plan["week_status"] if week_plan else None,
+            "load_actual": week_plan["load_actual"] if week_plan else None,
+            "load_target": week_plan["load_target"] if week_plan else None,
+            "sessions_remaining": _sessions_remaining(week_sessions, weekday_name),
+        },
+    }
+
+    ollama_adapter = RealOllamaAdapter() if real else MockOllamaAdapter()
+    explanation_result = ollama_adapter.explain(decision_context)
+
+    if not explanation_result.degraded:
+        # A second, fuller row — decisions is append-only (ADR-0003/0007);
+        # get_decision() returns the latest by created_at, so this becomes
+        # the record of what the athlete actually saw once Ollama succeeds,
+        # while the bare pre-Ollama row above remains the crash-safe one.
+        plan_repo.insert_decision(
+            date=date,
+            scheduled_session=resolved_session_type,
+            recommendation=decision_result["recommendation"],
+            rationale_json=json.dumps(rationale_dict),
+            llm_explanation=explanation_result.explanation,
+        )
+
+    # 10. Print the recommendation, rationale, and explanation (plus any
+    # WARN/INFO banner if Ollama degraded) — the recommendation always
+    # prints even when the explanation doesn't (§6.3).
+    click.echo(f"Recommendation: {decision_result['recommendation']}")
+    click.echo(f"Rationale: {decision_result['rationale'] or '(none)'}")
+    if decision_result["check_recovery_week_trigger"]:
+        click.echo("[Flag: check_recovery_week_trigger]")
+    if explanation_result.banner:
+        click.echo(f"[{explanation_result.severity}] {explanation_result.banner}")
+    if explanation_result.explanation:
+        click.echo(f"Explanation: {explanation_result.explanation}")
 
 
 if __name__ == "__main__":

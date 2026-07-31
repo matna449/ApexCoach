@@ -1,5 +1,6 @@
-"""live_llm tests need a real Ollama instance with llama3.1:8b pulled —
-skipped by default (SDD §7.2), run manually with --run-live-llm."""
+"""live_llm tests need a real Ollama instance with gemma4:latest pulled
+(docs/adr/0022) — skipped by default (SDD §7.2), run manually with
+--run-live-llm."""
 
 import pytest
 

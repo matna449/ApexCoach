@@ -158,7 +158,7 @@ The system operates across three nested planning horizons. The monthly layer has
 
 - Wraps every decision engine output with a natural language explanation.
 
-- Model: LLaMA 3.1 8B running locally via Ollama on M4 Pro (24 GB RAM).
+- Model: gemma4:latest running locally via Ollama on M4 Pro (24 GB RAM) — docs/adr/0022.
 
 - LLM receives structured JSON from the decision engine — it explains, it does not decide.
 
@@ -234,7 +234,7 @@ The system operates across three nested planning horizons. The monthly layer has
 
 - Strava API: All activity data assumed to sync from Coros automatically. No direct Coros API dependency in v1.0.
 
-- Ollama model: LLaMA 3.1 8B. Hardware: MacBook Pro 14-inch, M4 Pro, 24 GB RAM, macOS Tahoe 26.3.
+- Ollama model: gemma4:latest (docs/adr/0022). Hardware: MacBook Pro 14-inch, M4 Pro, 24 GB RAM, macOS Tahoe 26.3.
 
 - Language: Python 3.11+. CLI interface only for v1.0.
 
@@ -289,7 +289,7 @@ The system operates across three nested planning horizons. The monthly layer has
 
 - SQLite local database.
 
-- Ollama local LLM (LLaMA 3.1 8B).
+- Ollama local LLM (gemma4:latest, docs/adr/0022).
 
 ### v1.5 — Enrichment Layer
 

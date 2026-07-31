@@ -41,7 +41,7 @@ The following diagram shows all external actors and the system boundary. Everyth
 │                                                                     │
 │  ┌──────────────┐   ┌───────────────┐   ┌───────────────────────┐  │
 │  │  CLI Runner  │──▶│  Orchestrator │──▶│   Explanation Layer   │  │
-│  └──────────────┘   └───────┬───────┘   │   (Ollama LLaMA 3.1) │  │
+│  └──────────────┘   └───────┬───────┘   │   (Ollama gemma4)    │  │
 │                             │            └───────────────────────┘  │
 │          ┌──────────────────┼──────────────────────┐                │
 │          ▼                  ▼                       ▼                │
@@ -84,7 +84,7 @@ The following diagram shows all external actors and the system boundary. Everyth
 | Auth | authlib | 1.3+ | OAuth 2.0 PKCE flow handling, token storage and refresh. Reduces auth boilerplate significantly. |
 | Database | SQLite + aiosqlite | 3.x / 0.20 | File-based, zero-server, PostgreSQL-compatible DDL. aiosqlite for async queries. |
 | ORM / Query | SQLAlchemy Core | 2.0+ | SQL Expression Language (not ORM). Explicit queries, full control, clean migration to PostgreSQL without model rewrites. |
-| LLM Runtime | Ollama | latest | Local LLM inference on Apple Silicon. Zero data leaves the machine. Model: LLaMA 3.1 8B (fits in 24 GB with headroom). |
+| LLM Runtime | Ollama | latest | Local LLM inference on Apple Silicon. Zero data leaves the machine. Model: gemma4:latest (docs/adr/0022; fits in 24 GB with headroom). |
 | LLM Client | ollama-python | 0.3+ | Official Python client for Ollama. Handles streaming, structured prompts, and JSON mode. |
 | Testing | pytest + pytest-cov | 7.x / 4.x | Industry standard. Fixtures, parametrize, coverage reporting. Supports TDD workflow from day one. |
 | Mocking | pytest-httpx | 0.30+ | Intercepts httpx calls for offline API testing. No live credentials needed for unit or integration tests. |
@@ -409,7 +409,7 @@ This means historical context is preserved even if data is re-analysed later.
 │                                                        │
 │  ┌─────────────────────┐   ┌──────────────────────┐   │
 │  │  Python 3.11 venv   │   │  Ollama (background) │   │
-│  │  apex_coach/        │   │  LLaMA 3.1 8B        │   │
+│  │  apex_coach/        │   │  gemma4:latest       │   │
 │  │  CLI: python -m     │──▶│  localhost:11434     │   │
 │  │  apex_coach.cli     │   └──────────────────────┘   │
 │  └────────┬────────────┘                              │
@@ -469,9 +469,10 @@ STRAVA_REDIRECT_URI=http://localhost:8080/callback/strava
 DATABASE_URL=sqlite+aiosqlite:///./apex_coach.db
 APEX_ENCRYPTION_KEY=...          # Passphrase; Fernet key for oauth_tokens derived via PBKDF2HMAC, see docs/adr/0005
 
-# Ollama
+# Ollama — not actually env-driven today; OLLAMA_BASE_URL/OLLAMA_MODEL are
+# hardcoded constants in apex_coach/adapters/ollama_adapter.py (docs/adr/0022)
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
+OLLAMA_MODEL=gemma4:latest
 
 # Athlete config
 ATHLETE_MAX_HR=192          # Override. Recalculated from Strava if not set.

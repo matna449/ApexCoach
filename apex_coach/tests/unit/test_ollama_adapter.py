@@ -36,7 +36,7 @@ def test_model_not_found_degrades_with_warn_banner():
 
     assert result.explanation is None
     assert result.degraded is True
-    assert result.banner == "[Run: ollama pull llama3.1:8b to enable explanations]"
+    assert result.banner == "[Run: ollama pull gemma4:latest to enable explanations]"
     assert result.severity == "WARN"
 
 

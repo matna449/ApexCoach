@@ -17,9 +17,9 @@ FlagDirection = Literal["high_bad", "low_bad"]
 OVERRIDE_THRESHOLD = 4
 
 FIXED_QUESTIONS = (
-    ("muscle_soreness", "How is your overall muscle soreness right now?"),
-    ("subjective_energy", "How is your subjective energy level today?"),
-    ("sleep_quality_felt", "How was your sleep quality last night?"),
+    ("muscle_soreness", "How is your overall muscle soreness right now? (1=none, 5=severe)"),
+    ("subjective_energy", "How is your subjective energy level today? (1=very low, 5=very high)"),
+    ("sleep_quality_felt", "How was your sleep quality last night? (1=very poor, 5=excellent)"),
 )
 
 FIXED_QUESTION_KEYS = {key for key, _ in FIXED_QUESTIONS}
