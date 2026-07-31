@@ -9,10 +9,14 @@ import os
 from datetime import datetime, timezone
 from unittest.mock import patch
 
+import pytest
 import sqlalchemy as sa
 from click.testing import CliRunner
 
 from apex_coach.cli.main import cli
+from apex_coach.db.engine import create_engine
+from apex_coach.db.metrics_repository import MetricsRepository
+from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import session_scores
 from apex_coach.models.pydantic_models import StravaActivity, StravaStream
 
@@ -92,6 +96,13 @@ def _init_db(runner, env):
     with patch.dict(os.environ, env, clear=True):
         result = runner.invoke(cli, ["init-db"])
     assert result.exit_code == 0
+    # TRIMP load calculation (docs/adr/0024) needs an athlete profile —
+    # harmless for the RPE-based/no-activity tests in this file that don't
+    # reach the HR-based load path at all.
+    db_path = env["DATABASE_URL"].removeprefix("sqlite:///")
+    PlanRepository(create_engine(db_path)).insert_athlete_profile(
+        max_hr=190, baseline_resting_hr=50, sex="MALE"
+    )
 
 
 def test_sync_session_no_new_activities_exits_cleanly(tmp_path):
@@ -228,8 +239,11 @@ def test_sync_session_run_zone2_short_computes_hr_based_load(tmp_path):
             sa.text("SELECT * FROM activities WHERE strava_id = :sid"), {"sid": "222"}
         ).mappings().one()
 
-    # calculate_hr_based_load(15 min, 140 bpm, grade 0%) == 15*140*1.0/1000
-    assert row["load_score"] == 2.1
+    # TRIMP (docs/adr/0024): 15 min, avg_hr=140, resting_hr=50 (no day-of
+    # WHOOP reading -> profile.baseline_resting_hr fallback), max_hr=190,
+    # sex=MALE. Independently computed: ratio=0.6428571..., 15*ratio*0.64*
+    # e^(1.92*ratio) == 21.20455592008078
+    assert row["load_score"] == pytest.approx(21.20455592008078)
     assert row["rpe"] == 4
     assert row["date"] == "2026-07-30"
 
@@ -239,6 +253,78 @@ def test_sync_session_run_zone2_short_computes_hr_based_load(tmp_path):
         ).mappings().one()
     assert score_row["time_in_zone_pct"] == 100.0
     assert score_row["execution_score"] > 0
+
+
+def test_sync_session_prefers_day_of_whoop_resting_hr_over_profile(tmp_path):
+    """docs/adr/0024: TRIMP prefers the day-of WHOOP resting HR over the
+    athlete profile's baseline_resting_hr (50, from _init_db) or the
+    --resting-hr flag (also 50 here) — both would give a different result
+    than the day-of value (45) actually used below."""
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    _init_db(runner, env)
+
+    MetricsRepository(create_engine(str(tmp_path / "test.db"))).upsert_daily_metrics(
+        "2026-07-30", whoop_rhr_bpm=45
+    )
+
+    activity = _activity(
+        activity_id=223,
+        activity_type="Run",
+        elapsed_time=900,
+        distance=3000.0,
+        average_heartrate=140.0,
+        max_heartrate=148.0,
+    )
+    stream = _stream([140.0] * 900)
+    fake = FakeStravaAdapter(activities=[activity], streams={223: stream})
+
+    with patch.dict(os.environ, env, clear=True), patch(
+        "apex_coach.cli.main.RealStravaAdapter", fake
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--real",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+                "--rpe",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    with engine.begin() as conn:
+        row = conn.execute(
+            sa.text("SELECT load_score FROM activities WHERE strava_id = :sid"), {"sid": "223"}
+        ).mappings().one()
+
+    # ratio=(140-45)/(190-45)=0.6551724..., 15*ratio*0.64*e^(1.92*ratio)
+    assert row["load_score"] == pytest.approx(22.12785632810031)
+
+
+def test_sync_session_errors_without_profile_or_flags(tmp_path):
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    with patch.dict(os.environ, env, clear=True):
+        result = runner.invoke(cli, ["init-db"])
+    assert result.exit_code == 0
+    # Deliberately no athlete profile set up (unlike _init_db's default).
+
+    with patch.dict(os.environ, env, clear=True):
+        result = runner.invoke(
+            cli, ["sync-session", "--real", "--session-type", "Zone2_Short", "--rpe", "4"]
+        )
+
+    assert result.exit_code != 0
+    assert "set-athlete-profile" in result.output
 
 
 def test_sync_session_prompts_for_rpe_when_not_given(tmp_path):

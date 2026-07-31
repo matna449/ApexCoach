@@ -185,6 +185,32 @@ monthly_targets = sa.Table(
     sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
 )
 
+# Single-row athlete config (docs/adr/0023: single-user, no per-athlete
+# keying needed) — max_hr/sex feed the Banister TRIMP load calculation
+# (docs/adr/0024); baseline_resting_hr is a fallback only, the TRIMP
+# calculation prefers the day-of WHOOP resting HR (daily_metrics.whoop_rhr_bpm)
+# when available.
+athlete_profile = sa.Table(
+    "athlete_profile",
+    metadata,
+    sa.Column("id", sa.String, primary_key=True, default=_uuid),
+    sa.Column("max_hr", sa.Integer, nullable=True),
+    sa.Column("baseline_resting_hr", sa.Integer, nullable=True),
+    sa.Column(
+        "sex",
+        sa.Enum(
+            "MALE",
+            "FEMALE",
+            name="athlete_sex",
+            native_enum=False,
+            create_constraint=True,
+        ),
+        nullable=True,
+    ),
+    sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
+    sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
+)
+
 # API Integration Contract §5 — separate from the SDD's main schema, but
 # defined here alongside it since schema.py owns all table definitions.
 oauth_tokens = sa.Table(
