@@ -131,6 +131,16 @@ class MetricsRepository:
             ).all()
         return [_row_to_dict(row) for row in rows]
 
+    def get_activities_range(self, start_date: str, end_date: str) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.select(activities)
+                .where(activities.c.date >= start_date)
+                .where(activities.c.date <= end_date)
+                .order_by(activities.c.date)
+            ).all()
+        return [_row_to_dict(row) for row in rows]
+
     # -- session_scores -----------------------------------------------------
 
     def insert_session_score(self, **fields) -> str:
