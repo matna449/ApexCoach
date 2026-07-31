@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 testpaths = ["apex_coach/tests"]
 pythonpath = ["."]
+markers = [
+    "live_llm: requires a running local Ollama instance with llama3.1:8b pulled; skipped by default, run with --run-live-llm",
+]
 
 [tool.coverage.run]
 source = ["apex_coach"]

@@ -7,7 +7,7 @@
 |  |  |
 |----|----|
 | **Document Type** | API Integration Contract |
-| **Version** | 1.2 — WHOOP v2 + Strava correction |
+| **Version** | 1.3 — Ollama ask_followup() added |
 | **Companion Docs** | ApexCoach_PRD_v1.0 · ApexCoach_SDD_v1.0 |
 | **Author** | Mattias (Primary User / Developer) |
 | **APIs Covered** | WHOOP Developer API v2 · Strava API v3 · Ollama REST API |
@@ -486,7 +486,7 @@ Ollama runs as a background service on localhost:11434. No authentication requir
 | **Base URL** | http://localhost:11434 |
 | **Model** | llama3.1:8b (pull with: ollama pull llama3.1:8b) |
 | **Context window** | 128k tokens. Full structured input comfortably fits. |
-| **Adapter Method** | ollama_adapter.explain(decision_context: dict) -\> ExplanationResult (see docs/adr/0010) |
+| **Adapter Method** | ollama_adapter.explain(decision_context: dict) -\> ExplanationResult (see docs/adr/0010); ollama_adapter.ask_followup(decision_context: dict, prior_explanation: str, question: str) -\> ExplanationResult for conversational follow-up (see docs/adr/0020) |
 | **Hardware fit** | ~6 GB VRAM for 8B model. 24 GB M4 Pro has ample headroom. |
 
 ### 4.2 Endpoint: POST /api/chat
@@ -675,5 +675,6 @@ Apex Coach is a low-frequency application. A single morning run makes at most 4 
 | 1.0 | June 2026 | Initial draft. WHOOP, Strava, and Ollama contracts fully specified with mock payloads, Pydantic models, failure modes, and rate limit strategy. | Mattias |
 | 1.1 | 31 July 2026 | Corrected against WHOOP's real, live-verified API: v1 endpoints retired, replaced with /developer/v2/recovery, /developer/v2/cycle, /developer/v2/activity/sleep; OAuth scope corrected to read:recovery read:cycles read:sleep offline (read:strain is not a real scope; offline is required for refresh tokens); redirect_uri changed from http://localhost:8080/callback (rejected by WHOOP) to a hosted GitHub Pages callback page with a paste-the-code-back flow; WhoopSleep.id corrected from int to str (WHOOP v2 uses a UUID string for sleep record ids). See docs/adr/0018, GitHub issues \#32/#34/#35. | Mattias + Claude |
 | 1.2 | 31 July 2026 | Corrected §3 (Strava) before implementing F02.2, audited against developers.strava.com: token exchange/refresh endpoint corrected to https://www.strava.com/api/v3/oauth/token (was missing /api/v3); §3.2/§3.3 endpoint paths corrected from GET /v3/athlete/activities and GET /v3/activities/{id}/streams to GET /athlete/activities and GET /activities/{id}/streams (were double-counting the /v3 already in the base URL); redirect_uri changed to the hosted GitHub Pages callback page (Strava does whitelist localhost, but this keeps the OAuth flow consistent with WHOOP); §6.2's 429 retry count made explicit (max 3, matching WHOOP). See GitHub issue \#10. | Mattias + Claude |
+| 1.3 | 31 July 2026 | Documented ollama_adapter.ask_followup(decision_context, prior_explanation, question) -\> ExplanationResult (Sec 4.1 Adapter Method row) alongside explain() — added while implementing F09.2 (RealOllamaAdapter, \#14) after finding the PRD/ADR-0001-documented "conversational follow-up" requirement was never actually added to OllamaAdapterProtocol during F09.1. See docs/adr/0020. | Mattias + Claude |
 
 *Next document: Logic & Algorithm Specification — decision tree matrix, weekly adaptation state machine, session scoring detail, and monthly load forecasting.*
