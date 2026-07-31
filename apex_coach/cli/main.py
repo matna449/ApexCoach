@@ -25,7 +25,11 @@ from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import KEY_SESSION_TYPES, make_decision
-from apex_coach.engines.monthly_engine import calculate_weekly_target, load_au_for_activity
+from apex_coach.engines.monthly_engine import (
+    calculate_weekly_target,
+    load_au_for_activity,
+    run_monthly_review,
+)
 from apex_coach.engines.weekly_engine import run_weekly_adaptation
 from apex_coach.orchestrator.orchestrator import (
     HRVDeltaBand,
@@ -1140,6 +1144,73 @@ def weekly_summary(week_start: str, today: str | None):
         click.echo(
             f"Average execution score this week: {avg:.1f} ({len(execution_scores)} scored session(s))"
         )
+
+
+@cli.command(name="monthly-summary")
+@click.option(
+    "--month-start-date",
+    required=True,
+    help="ISO 8601 date for the first day of the month, e.g. 2026-08-01.",
+)
+@click.option(
+    "--today",
+    default=None,
+    help=(
+        "ISO 8601 date to treat as 'today' for days-elapsed-in-month accounting "
+        "(defaults to the actual current date, UTC)."
+    ),
+)
+def monthly_summary(month_start_date: str, today: str | None):
+    """Run monthly_engine.run_monthly_review() against a real month's
+    accumulated weekly_plans/activities/session_scores/daily_metrics data,
+    persist load_actual_total/hrv_trend_json/month_summary_json back to
+    monthly_targets, and print a human-readable summary (Logic Spec §5.3)."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+    metrics_repo = MetricsRepository(engine)
+
+    try:
+        summary = run_monthly_review(plan_repo, metrics_repo, month_start_date, today=today)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(f"{summary['month']} ({summary['periodisation_phase']})")
+    click.echo(
+        f"Load: {summary['load_actual_au']:.1f} / {summary['load_target_au']:.1f} AU "
+        f"({summary['load_pct']}%) — {summary['load_status']}"
+    )
+    click.echo(f"HRV trend: {summary['hrv_trend']} (weekly avgs: {summary['hrv_weekly_avgs_ms']})")
+    click.echo(
+        f"Sessions: {summary['sessions_completed']} completed, "
+        f"{summary['sessions_skipped']} skipped ({summary['sessions_written_off']} written off), "
+        f"{summary['recovery_weeks']} recovery week(s)"
+    )
+    click.echo(f"Session quality avg: {summary['session_quality_avg']}")
+    click.echo(
+        f"Overpush flags: {summary['overpush_flags']}, "
+        f"Underpush flags: {summary['underpush_flags']}"
+    )
+
+    top = summary["top_execution_session"]
+    if top:
+        click.echo(
+            f"Best session: {top.get('session_type', 'unknown')} "
+            f"(score {top['execution_score']:.1f})"
+        )
+    worst = summary["worst_execution_session"]
+    if worst:
+        click.echo(
+            f"Worst session: {worst.get('session_type', 'unknown')} "
+            f"(score {worst['execution_score']:.1f})"
+        )
+
+    if summary["key_observations"]:
+        click.echo("Key observations:")
+        for observation in summary["key_observations"]:
+            click.echo(f"  - {observation}")
+
+    click.echo(f"Next month: {summary['next_month_recommendation']}")
 
 
 if __name__ == "__main__":
