@@ -17,6 +17,7 @@ from apex_coach.adapters.whoop_adapter import (
 )
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
+from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
@@ -139,6 +140,7 @@ def whoop_smoke(date: str | None, real: bool):
     if date is None:
         date = datetime.now(timezone.utc).date().isoformat()
 
+    engine = None
     if real:
         settings = get_settings()
         if not settings.whoop_client_id or not settings.whoop_client_secret:
@@ -158,6 +160,17 @@ def whoop_smoke(date: str | None, real: bool):
     click.echo(f"HRV: {payload.whoop_hrv_ms} ms")
     click.echo(f"RHR: {payload.whoop_rhr_bpm} bpm")
     click.echo(f"Strain: {payload.whoop_strain}")
+
+    if real:
+        MetricsRepository(engine).upsert_daily_metrics(
+            date,
+            whoop_recovery_pct=payload.whoop_recovery_pct,
+            whoop_hrv_ms=payload.whoop_hrv_ms,
+            whoop_rhr_bpm=payload.whoop_rhr_bpm,
+            whoop_strain=payload.whoop_strain,
+            whoop_sleep_hours=payload.whoop_sleep_hours,
+        )
+        click.echo(f"Persisted to daily_metrics for {date}.")
 
 
 @cli.command(name="strava-smoke")
