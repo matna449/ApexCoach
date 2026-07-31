@@ -144,6 +144,7 @@ weekly_plans = sa.Table(
         sa.Enum(
             "ON_TRACK",
             "LOAD_DEFICIT",
+            "OVERREACHED",
             "RECOVERY_WEEK",
             "COMPLETE",
             name="week_status",
