@@ -24,7 +24,7 @@ FailureMode = Literal[
 ]
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "llama3.1:8b"
+OLLAMA_MODEL = "gemma4:latest"
 OLLAMA_TIMEOUT_S = 30
 
 SYSTEM_PROMPT = (
@@ -106,7 +106,7 @@ def _degrade_on_failure(call_model) -> ExplanationResult:
         return ExplanationResult(
             explanation=None,
             degraded=True,
-            banner="[Run: ollama pull llama3.1:8b to enable explanations]",
+            banner=f"[Run: ollama pull {OLLAMA_MODEL} to enable explanations]",
             severity="WARN",
         )
     except AdapterUnavailableError:
