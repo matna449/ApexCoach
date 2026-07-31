@@ -45,6 +45,8 @@ See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model
 2. `apex_coach init-db` — creates the SQLite schema. Nothing else does this; run it once before any command that touches the database.
 3. `apex_coach connect-whoop` — one-time OAuth handshake (see `docs/adr/0018`).
 4. `apex_coach whoop-smoke --real` — verify the connection.
+5. `apex_coach connect-strava` — one-time OAuth handshake (see `docs/adr/0019`).
+6. `apex_coach strava-smoke --real` — verify the connection.
 
 ## Working with this repo
 

@@ -5,11 +5,15 @@ from datetime import datetime, timedelta, timezone
 import click
 
 from apex_coach.adapters.errors import AdapterError
-from apex_coach.adapters.strava_adapter import MockStravaAdapter
+from apex_coach.adapters.strava_adapter import (
+    MockStravaAdapter,
+    RealStravaAdapter,
+    run_authorization_flow as run_strava_authorization_flow,
+)
 from apex_coach.adapters.whoop_adapter import (
     MockWhoopAdapter,
     RealWhoopAdapter,
-    run_authorization_flow,
+    run_authorization_flow as run_whoop_authorization_flow,
 )
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
@@ -67,7 +71,7 @@ def connect_whoop():
         )
 
     try:
-        tokens = run_authorization_flow(
+        tokens = run_whoop_authorization_flow(
             settings.whoop_client_id, settings.whoop_client_secret, settings.whoop_redirect_uri
         )
     except AdapterError as e:
@@ -86,6 +90,38 @@ def connect_whoop():
         scope=tokens.get("scope", ""),
     )
     click.echo("WHOOP connected. Token stored — run `whoop-smoke --real` to verify.")
+
+
+@cli.command(name="connect-strava")
+def connect_strava():
+    """One-time browser OAuth handshake (API Contract §3.1). Requires
+    STRAVA_CLIENT_ID/STRAVA_CLIENT_SECRET in .env — run this before
+    `strava-smoke --real`."""
+    settings = get_settings()
+    if not settings.strava_client_id or not settings.strava_client_secret:
+        raise click.ClickException(
+            "STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set — register an app "
+            "at strava.com/settings/api and add them to .env first."
+        )
+
+    try:
+        tokens = run_strava_authorization_flow(
+            settings.strava_client_id, settings.strava_client_secret, settings.strava_redirect_uri
+        )
+    except AdapterError as e:
+        raise click.ClickException(str(e)) from e
+
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=timezone.utc).isoformat()
+    token_repo.save_token(
+        provider="STRAVA",
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        expires_at=expires_at,
+        scope=tokens.get("scope", ""),
+    )
+    click.echo("Strava connected. Token stored — run `strava-smoke --real` to verify.")
 
 
 @cli.command(name="whoop-smoke")
@@ -131,10 +167,28 @@ def whoop_smoke(date: str | None, real: bool):
     default=0,
     help="Unix timestamp — fetch activities newer than this (defaults to 0, all).",
 )
-def strava_smoke(since_ts: int):
-    """Fetch (mock) recent Strava activities and print them. No network calls."""
-    adapter = MockStravaAdapter()
-    activities = adapter.get_new_activities(since_ts)
+@click.option(
+    "--real", is_flag=True, default=False, help="Use RealStravaAdapter instead of the mock."
+)
+def strava_smoke(since_ts: int, real: bool):
+    """Fetch recent Strava activities and print them. Mock by default (no
+    network calls); --real hits the live API."""
+    if real:
+        settings = get_settings()
+        if not settings.strava_client_id or not settings.strava_client_secret:
+            raise click.ClickException("STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env.")
+        engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+        token_repo = TokenRepository(engine, settings.apex_encryption_key)
+        adapter = RealStravaAdapter(
+            token_repo, settings.strava_client_id, settings.strava_client_secret
+        )
+    else:
+        adapter = MockStravaAdapter()
+
+    try:
+        activities = adapter.get_new_activities(since_ts)
+    except AdapterError as e:
+        raise click.ClickException(str(e)) from e
 
     for activity in activities:
         click.echo(f"{activity.name} ({activity.type})")

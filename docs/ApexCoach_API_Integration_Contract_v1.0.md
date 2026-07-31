@@ -7,7 +7,7 @@
 |  |  |
 |----|----|
 | **Document Type** | API Integration Contract |
-| **Version** | 1.1 — WHOOP v2 correction |
+| **Version** | 1.2 — WHOOP v2 + Strava correction |
 | **Companion Docs** | ApexCoach_PRD_v1.0 · ApexCoach_SDD_v1.0 |
 | **Author** | Mattias (Primary User / Developer) |
 | **APIs Covered** | WHOOP Developer API v2 · Strava API v3 · Ollama REST API |
@@ -21,7 +21,7 @@ Apex Coach integrates three external interfaces. Each is accessed exclusively th
 | **API** | **Auth Type** | **Base URL** | **Rate Limit** | **Adapter Module** |
 |----|----|----|----|----|
 | WHOOP v2 | OAuth 2.0 + PKCE | api.prod.whoop.com | 100 req/min | adapters/whoop_adapter.py |
-| Strava v3 | OAuth 2.0 + PKCE | www.strava.com/api/v3 | 100 req/15min | adapters/strava_adapter.py |
+| Strava v3 | OAuth 2.0 (no PKCE) | www.strava.com/api/v3 | 100 req/15min | adapters/strava_adapter.py |
 | Ollama | None (local) | localhost:11434 | Unlimited | adapters/ollama_adapter.py |
 
 > **CONTRACT RULE**
@@ -303,24 +303,24 @@ class WhoopDailyPayload(BaseModel):
 
 ### 3.1 OAuth 2.0 Authorization Flow
 
-Strava uses OAuth 2.0 Authorization Code flow. The access token expires after 6 hours. The refresh token is long-lived and rotates on each refresh — always store the new token immediately.
+Strava uses OAuth 2.0 Authorization Code flow (no PKCE). The access token expires after 6 hours. The refresh token is long-lived and rotates on each refresh — always store the new token immediately. Strava explicitly whitelists localhost/127.0.0.1 redirect URIs, but for consistency with WHOOP (docs/adr/0018) this also uses the hosted GitHub Pages callback page and a paste-the-code-back flow, rather than a local server.
 
 ```
 STEP 1 — DEVELOPER SETUP (one time, manual)
   Register app at: strava.com/settings/api
-  Set Authorization Callback Domain: localhost
+  Set redirect URI: https://matna449.github.io/ApexCoach/callback.html
   Obtain: STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET
 
 STEP 2 — AUTHORIZATION URL (one time, opens browser)
   GET https://www.strava.com/oauth/authorize
     ?client_id={STRAVA_CLIENT_ID}
-    &redirect_uri=http://localhost:8080/callback/strava
+    &redirect_uri=https://matna449.github.io/ApexCoach/callback.html
     &response_type=code
     &approval_prompt=auto
     &scope=read,activity:read_all
 
-STEP 3 — TOKEN EXCHANGE
-  POST https://www.strava.com/oauth/token
+STEP 3 — TOKEN EXCHANGE (after athlete pastes the code+state from the callback page into the CLI)
+  POST https://www.strava.com/api/v3/oauth/token
   Body (form-encoded):
     client_id={STRAVA_CLIENT_ID}
     client_secret={STRAVA_CLIENT_SECRET}
@@ -338,7 +338,7 @@ STEP 4 — TOKEN RESPONSE
   }
 
 STEP 5 — TOKEN REFRESH (automatic, every 6 hours)
-  POST https://www.strava.com/oauth/token
+  POST https://www.strava.com/api/v3/oauth/token
   Body:
     client_id={STRAVA_CLIENT_ID}
     client_secret={STRAVA_CLIENT_SECRET}
@@ -349,13 +349,13 @@ CRITICAL: Strava refresh tokens rotate. Every refresh response contains a NEW
 refresh_token. Always overwrite the stored token immediately.
 ```
 
-### 3.2 Endpoint: GET /v3/athlete/activities
+### 3.2 Endpoint: GET /athlete/activities
 
 Lists the athlete's recent activities. Called on each sync to detect new sessions since the last stored Strava ID. Uses the after parameter to minimise redundant fetches — but a strava_id can still reappear (e.g. a Strava-side edit within the polling window), which is exactly why sync upserts rather than assumes no overlap. See Deduplication below.
 
 |  |  |
 |----|----|
-| **Endpoint** | GET /v3/athlete/activities |
+| **Endpoint** | GET /athlete/activities |
 | **Auth Header** | Authorization: Bearer {access_token} |
 | **Query Params** | after={last_sync_unix_ts}&per_page=30&page=1 |
 | **Adapter Method** | strava_adapter.get_new_activities(since_ts) -\> list\[StravaActivity\] |
@@ -437,13 +437,13 @@ class StravaActivity(BaseModel):
         return 0.0
 ```
 
-### 3.3 Endpoint: GET /v3/activities/{id}/streams
+### 3.3 Endpoint: GET /activities/{id}/streams
 
 Fetches the raw HR data stream for a specific activity. Used for detailed time-in-zone analysis. Only called when has_heartrate is true. Result is cached — never re-fetched for a completed activity.
 
 |  |  |
 |----|----|
-| **Endpoint** | GET /v3/activities/{id}/streams |
+| **Endpoint** | GET /activities/{id}/streams |
 | **Query Params** | keys=heartrate,time,distance&key_by_type=true&series_type=distance |
 | **Rate Cost** | 1 request per activity. Always cache result in strava_raw_json column. |
 | **Adapter Method** | strava_adapter.get_activity_stream(activity_id) -\> StravaStream \| None |
@@ -623,7 +623,7 @@ Strava sync is not time-critical. A sync failure queues the score for the next r
 |----|----|----|:--:|
 | **401** | Token expired | Refresh token. Strava tokens expire in 6 hours. Always check expires_at before calling. | **CRITICAL** |
 | **403** | Scope not granted | Log and alert. Athlete must re-authorise with activity:read_all scope. Provide re-auth URL in CLI output. | **CRITICAL** |
-| **429** | Rate limit (100/15min) | Back off and retry after 15 minutes. Log the backoff. All sync operations are batched to minimise total request count. | **WARN** |
+| **429** | Rate limit (100/15min) | Back off and retry after 15 minutes (max 3 retries). Log the backoff. All sync operations are batched to minimise total request count. | **WARN** |
 | **404** | Activity not found | Activity may have been deleted from Strava. Mark record as STRAVA_DELETED in DB. Do not retry. | **INFO** |
 | **No HR data** | has_heartrate = false | Score session without HR components. time_in_zone_score = null. Flag as NO_HR_DATA. Request manual RPE input from athlete. | **WARN** |
 | **Sync gap \> 7d** | Long gap detected | On gap detection, perform full backfill for the missing window using paginated after/before parameters. | **INFO** |
@@ -674,5 +674,6 @@ Apex Coach is a low-frequency application. A single morning run makes at most 4 
 |----|----|----|----|
 | 1.0 | June 2026 | Initial draft. WHOOP, Strava, and Ollama contracts fully specified with mock payloads, Pydantic models, failure modes, and rate limit strategy. | Mattias |
 | 1.1 | 31 July 2026 | Corrected against WHOOP's real, live-verified API: v1 endpoints retired, replaced with /developer/v2/recovery, /developer/v2/cycle, /developer/v2/activity/sleep; OAuth scope corrected to read:recovery read:cycles read:sleep offline (read:strain is not a real scope; offline is required for refresh tokens); redirect_uri changed from http://localhost:8080/callback (rejected by WHOOP) to a hosted GitHub Pages callback page with a paste-the-code-back flow; WhoopSleep.id corrected from int to str (WHOOP v2 uses a UUID string for sleep record ids). See docs/adr/0018, GitHub issues \#32/#34/#35. | Mattias + Claude |
+| 1.2 | 31 July 2026 | Corrected §3 (Strava) before implementing F02.2, audited against developers.strava.com: token exchange/refresh endpoint corrected to https://www.strava.com/api/v3/oauth/token (was missing /api/v3); §3.2/§3.3 endpoint paths corrected from GET /v3/athlete/activities and GET /v3/activities/{id}/streams to GET /athlete/activities and GET /activities/{id}/streams (were double-counting the /v3 already in the base URL); redirect_uri changed to the hosted GitHub Pages callback page (Strava does whitelist localhost, but this keeps the OAuth flow consistent with WHOOP); §6.2's 429 retry count made explicit (max 3, matching WHOOP). See GitHub issue \#10. | Mattias + Claude |
 
 *Next document: Logic & Algorithm Specification — decision tree matrix, weekly adaptation state machine, session scoring detail, and monthly load forecasting.*
