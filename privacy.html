@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ApexCoach — Privacy Policy</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 640px;
+    margin: 4rem auto;
+    padding: 0 1.5rem;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8e8; background: #16171a; }
+    a { color: #7ab7ff; }
+  }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  .updated { opacity: 0.65; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+  <h1>ApexCoach — Privacy Policy</h1>
+  <p class="updated">Last updated: 2026-07-31</p>
+
+  <p>ApexCoach is a personal training-coach application built and run by a single athlete for their own use. It is not a hosted service, and it is not offered to the public. This page exists because WHOOP's (and Strava's) OAuth application-registration process requires a published privacy policy URL for any app that requests access to a WHOOP or Strava account, including personal, non-commercial ones.</p>
+
+  <h2>What data ApexCoach accesses</h2>
+  <p>With your explicit authorization (OAuth 2.0), ApexCoach reads:</p>
+  <ul>
+    <li><strong>From WHOOP:</strong> recovery score, HRV, resting heart rate, cycle strain, and sleep data.</li>
+    <li><strong>From Strava:</strong> recent activity data (type, distance, duration, heart rate, pace, elevation).</li>
+  </ul>
+  <p>ApexCoach does not post, modify, or delete anything in your WHOOP or Strava account. It only reads data you've authorized it to read.</p>
+
+  <h2>Where your data goes</h2>
+  <p>All data ApexCoach retrieves is stored locally, in a single SQLite database file on the machine you run ApexCoach on. ApexCoach does not transmit your health or activity data to any server, third party, or cloud service. The only network calls it makes are directly to the WHOOP API, the Strava API, and a local, self-hosted Ollama instance running on the same machine for generating plain-language explanations of its recommendations — no data leaves your machine to reach a hosted AI service.</p>
+  <p>OAuth access and refresh tokens are encrypted at rest (Fernet symmetric encryption) before being stored in that same local database.</p>
+
+  <h2>Who can see your data</h2>
+  <p>Only the person running ApexCoach on their own machine. There is no multi-user access, no admin dashboard, and no analytics or telemetry collection.</p>
+
+  <h2>Revoking access</h2>
+  <p>You can revoke ApexCoach's access to your WHOOP or Strava account at any time from WHOOP's or Strava's own account settings (Apps/Connected Apps). Doing so invalidates the tokens ApexCoach has stored; ApexCoach will no longer be able to fetch new data until you reauthorize.</p>
+
+  <h2>Contact</h2>
+  <p>This is a personal project. Questions can be directed to the repository owner via <a href="https://github.com/matna449/ApexCoach">GitHub</a>.</p>
+</body>
+</html>
