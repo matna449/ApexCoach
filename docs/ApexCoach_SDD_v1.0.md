@@ -338,27 +338,9 @@ Example: Max HR = 192, Resting HR = 48 (from WHOOP)
   Zone 4: 48 + (0.80 × 144) to 48 + (0.90 × 144)  =  163 to 178 bpm
 ```
 
-### 5.2 Grade-Adjusted Load Calculation
+### 5.2 Session Load Calculation
 
-A flat 10km and a hilly 10km produce different training stimuli. Grade-adjusted pace normalises for elevation to give a fair load comparison across routes.
-
-```
-Grade (%) = (Elevation Gain / Distance) × 100
-
-Grade Adjustment Factor (Minetti coefficients, simplified):
-  Grade ≤  0%:  factor = 1.00  (flat or descent, no uplift)
-  Grade 1–3%:  factor = 1.05
-  Grade 3–6%:  factor = 1.12
-  Grade 6–10%: factor = 1.22
-  Grade > 10%: factor = 1.35
-
-Grade-Adjusted Pace = Actual Pace (sec/km) × Grade Adjustment Factor
-
-Load Score = (Duration_minutes × Avg_HR_bpm × Grade_Factor) / 1000
-
-Note: This is an approximation. The Banister Impulse-Response model
-      will replace this in v1.5 for more physiologically accurate load.
-```
+Load for HR-based sessions (run/ride/swim) is calculated via the Banister Impulse-Response model (TRIMP) — docs/adr/0024, Logic & Algorithm Spec §5.1. The grade/Minetti-coefficient-adjusted formula this section previously documented is superseded: TRIMP is self-adjusting for terrain (climbing raises HR, which raises the load score directly), so no separate grade term is needed. `activities.grade_adj_pace` remains in the schema but was never populated by any grade-adjusted-pace feature — only ever consumed as a load multiplier, which this ADR removes.
 
 ### 5.3 Session Execution Score
 
