@@ -1,11 +1,19 @@
 """CLI entry point — command group. See docs/adr/0008."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import click
 
+from apex_coach.adapters.errors import AdapterError
 from apex_coach.adapters.strava_adapter import MockStravaAdapter
-from apex_coach.adapters.whoop_adapter import MockWhoopAdapter
+from apex_coach.adapters.whoop_adapter import (
+    MockWhoopAdapter,
+    RealWhoopAdapter,
+    run_authorization_flow,
+)
+from apex_coach.config.settings import get_settings
+from apex_coach.db.engine import create_engine
+from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
 from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
 from apex_coach.services.zone_calculator import calculate_zones
@@ -34,19 +42,69 @@ def zones(max_hr: int, resting_hr: int):
         click.echo(f"{ZONE_LABELS[zone_name]}: {lower}-{upper} bpm")
 
 
+@cli.command(name="connect-whoop")
+def connect_whoop():
+    """One-time browser OAuth handshake (API Contract §2.1). Requires
+    WHOOP_CLIENT_ID/WHOOP_CLIENT_SECRET in .env — run this before
+    `whoop-smoke --real`."""
+    settings = get_settings()
+    if not settings.whoop_client_id or not settings.whoop_client_secret:
+        raise click.ClickException(
+            "WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET not set — register an app "
+            "at developer.whoop.com and add them to .env first."
+        )
+
+    try:
+        tokens = run_authorization_flow(
+            settings.whoop_client_id, settings.whoop_client_secret, settings.whoop_redirect_uri
+        )
+    except (TimeoutError, AdapterError) as e:
+        raise click.ClickException(str(e)) from e
+
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
+    ).isoformat()
+    token_repo.save_token(
+        provider="WHOOP",
+        access_token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        expires_at=expires_at,
+        scope=tokens.get("scope", ""),
+    )
+    click.echo("WHOOP connected. Token stored — run `whoop-smoke --real` to verify.")
+
+
 @cli.command(name="whoop-smoke")
 @click.option(
     "--date",
     default=None,
     help="ISO 8601 date to fetch (defaults to today, UTC).",
 )
-def whoop_smoke(date: str | None):
-    """Fetch (mock) today's WHOOP daily payload (recovery, cycle, sleep) and print it. No network calls."""
+@click.option(
+    "--real", is_flag=True, default=False, help="Use RealWhoopAdapter instead of the mock."
+)
+def whoop_smoke(date: str | None, real: bool):
+    """Fetch today's WHOOP daily payload (recovery, cycle, sleep) and print it.
+    Mock by default (no network calls); --real hits the live API."""
     if date is None:
         date = datetime.now(timezone.utc).date().isoformat()
 
-    adapter = MockWhoopAdapter()
-    payload = adapter.get_daily_payload(date)
+    if real:
+        settings = get_settings()
+        if not settings.whoop_client_id or not settings.whoop_client_secret:
+            raise click.ClickException("WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET not set in .env.")
+        engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+        token_repo = TokenRepository(engine, settings.apex_encryption_key)
+        adapter = RealWhoopAdapter(token_repo, settings.whoop_client_id, settings.whoop_client_secret)
+    else:
+        adapter = MockWhoopAdapter()
+
+    try:
+        payload = adapter.get_daily_payload(date)
+    except AdapterError as e:
+        raise click.ClickException(str(e)) from e
 
     click.echo(f"Recovery: {payload.whoop_recovery_pct}%")
     click.echo(f"HRV: {payload.whoop_hrv_ms} ms")
