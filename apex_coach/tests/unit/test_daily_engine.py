@@ -1,3 +1,55 @@
+"""Unit tests for daily_engine.py's four decision trees (§3.1-§3.4) plus the
+§3.5 KEY-session decision matrix.
+
+Decision-matrix audit (F15.2, #65) — performed against Logic & Algorithm
+Spec v1.0, §3.5's literal 35-cell KEY-session matrix and §3.1-3.4's prose
+decision trees for Zone2/Strength/Recovery. Every branch in
+_decide_key_session/_decide_zone2_session/_decide_strength_session/
+_decide_recovery_session was traced against its spec section and matched to
+a test asserting the exact expected (recommendation, rationale) pair — not
+just crash-safety (that's what the itertools.product smoke test below
+already covers). Findings:
+
+- §3.5's "Any Joint>=4" column is a single override pre-check in
+  make_decision() that short-circuits before recovery/HRV/soreness are even
+  read (see test_override_triggered_forces_abort_regardless_of_session_type)
+  — the whole column collapses to one equivalence class per session type,
+  already covered.
+- §3.5's RED row (20 cells: 4 HRV x 5 soreness) was already fully
+  enumerated literally by test_key_red_always_aborts_and_flags_recovery_week.
+- Real letter-of-the-table gap found and filled: the GREEN+Positive-HRV and
+  GREEN+Neutral-HRV rows of §3.5 were only ever exercised with
+  HRV=NEGATIVE/STRONG_NEG (deliberately, to prove the code's documented
+  HRV-independence for GREEN — see docs/adr/0015), plus one HRV=POSITIVE
+  cell, but HRV=NEUTRAL was never used anywhere in a GREEN case, and
+  HRV=POSITIVE was only used for the Severe cell. Added
+  test_key_green_positive_neutral_hrv_matches_documented_letter_goes,
+  test_key_green_positive_neutral_hrv_high_soreness_modifies, and
+  test_key_green_neutral_hrv_severe_soreness_aborts to close every GREEN
+  cell with the exact HRV values §3.5 names, without duplicating the
+  existing HRV-independence proof.
+- Real gap found and filled in §3.3 (Strength): the existing
+  test_strength_severe_soreness_always_aborts_regardless_of_recovery only
+  ever called decide() with recovery=GREEN, so its "regardless of recovery"
+  claim wasn't actually substantiated by parametrization for YELLOW. Fixed
+  by parametrizing over both non-RED recovery bands (RED is already
+  covered separately by test_strength_red_always_aborts).
+- Real gap found and filled in §3.4 (Recovery/Rest): tomorrow_session_type
+  defaults to None (e.g. no plan beyond today) and was never exercised —
+  only concrete session-type strings were tested. Added
+  test_recovery_green_tomorrow_none_standard_protocol_no_primer to confirm
+  the CNS-primer branch correctly stays off for the untested None case.
+- Zone2 (§3.2) was already exhaustively covered per equivalence class: every
+  branch's session_type/soreness/HRV independence is either asserted
+  directly by an existing parametrize or is explicit in the code (e.g. the
+  "# RED — branches on session_type only, not soreness" comment), matching
+  a representative already in the suite.
+
+No spec/code mismatches were found beyond the two already-documented,
+already-tested ADR-0015 gaps (GREEN ignores HRV; Strength's GREEN+HIGH cell
+undocumented in §3.3 prose).
+"""
+
 import itertools
 
 import pytest
@@ -87,6 +139,36 @@ def test_key_green_high_soreness_modifies():
 
 def test_key_green_severe_soreness_aborts():
     result = decide("Threshold", GREEN, POS, SEV)
+    assert result["recommendation"] == ABORT
+    assert result["rationale"] == "Swap to Zone2_Short or Recovery. Do not attempt impact."
+
+
+@pytest.mark.parametrize("hrv", [POS, NEU])
+@pytest.mark.parametrize("soreness", [NONE_, MILD, MOD])
+def test_key_green_positive_neutral_hrv_matches_documented_letter_goes(hrv, soreness):
+    """§3.5 audit gap-fill: GREEN's HRV-independence is already proven by
+    test_key_green_low_to_moderate_soreness_goes using HRV=NEGATIVE, but
+    §3.5 documents separate GREEN+Positive-HRV and GREEN+Neutral-HRV rows —
+    this closes the letter of both rows' None/Mild/Moderate cells with the
+    exact HRV values the table names."""
+    result = decide("HIIT", GREEN, hrv, soreness)
+    assert result["recommendation"] == GO
+    assert result["rationale"] is None
+
+
+@pytest.mark.parametrize("hrv", [POS, NEU])
+def test_key_green_positive_neutral_hrv_high_soreness_modifies(hrv):
+    """§3.5 audit gap-fill: closes GREEN+Positive/Neutral-HRV rows' High cells."""
+    result = decide("Threshold", GREEN, hrv, HIGH)
+    assert result["recommendation"] == MODIFY
+    assert result["rationale"] == "Reduce interval count by 1. Monitor form carefully."
+
+
+def test_key_green_neutral_hrv_severe_soreness_aborts():
+    """§3.5 audit gap-fill: closes GREEN+Neutral-HRV's Severe cell (the
+    Positive-HRV Severe cell is already covered by
+    test_key_green_severe_soreness_aborts)."""
+    result = decide("HIIT", GREEN, NEU, SEV)
     assert result["recommendation"] == ABORT
     assert result["rationale"] == "Swap to Zone2_Short or Recovery. Do not attempt impact."
 
@@ -249,8 +331,14 @@ def test_strength_red_always_aborts():
     assert result["rationale"] == "High systemic or mechanical fatigue. Replace with mobility work."
 
 
-def test_strength_severe_soreness_always_aborts_regardless_of_recovery():
-    result = decide("Strength", GREEN, NEU, SEV)
+@pytest.mark.parametrize("recovery", [GREEN, YELLOW])
+def test_strength_severe_soreness_always_aborts_regardless_of_recovery(recovery):
+    """§3.3 audit gap-fill: the 'regardless of recovery' claim in this test's
+    own name previously wasn't substantiated by parametrization — only GREEN
+    was exercised. RED is already covered separately by
+    test_strength_red_always_aborts (recovery_band == RED is its own arm of
+    the `or` condition)."""
+    result = decide("Strength", recovery, NEU, SEV)
     assert result["recommendation"] == ABORT
 
 
@@ -269,6 +357,15 @@ def test_recovery_green_key_tomorrow_adds_primer(tomorrow):
     result = decide("Recovery", GREEN, NEU, NONE_, tomorrow_session_type=tomorrow)
     assert result["recommendation"] == GO
     assert "CNS primer" in result["rationale"]
+
+
+def test_recovery_green_tomorrow_none_standard_protocol_no_primer():
+    """§3.4 audit gap-fill: tomorrow_session_type defaults to None (e.g. no
+    plan beyond today) and was never exercised — only concrete session-type
+    strings were tested. Confirms the primer branch correctly stays off."""
+    result = decide("Recovery", GREEN, NEU, NONE_, tomorrow_session_type=None)
+    assert result["recommendation"] == GO
+    assert result["rationale"] == "Standard: 20-30 min yoga or foam rolling."
 
 
 @pytest.mark.parametrize("hrv", [NEU, POS])
