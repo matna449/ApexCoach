@@ -1,5 +1,6 @@
 """CLI entry point — command group. See docs/adr/0008."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import click
@@ -18,6 +19,7 @@ from apex_coach.adapters.whoop_adapter import (
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
+from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
@@ -38,7 +40,27 @@ ZONE_LABELS = {
     "zone5": "Zone 5 (VO2max)",
 }
 
-SESSION_TYPES = ["HIIT", "Threshold", "Zone2_Long", "Zone2_Short", "Strength", "Recovery", "Rest"]
+# Canonical session-type vocabulary — must match the `today` command's
+# --session-type choices and what the decision/weekly engines expect.
+SESSION_TYPES = [
+    "HIIT",
+    "Threshold",
+    "Zone2_Long",
+    "Zone2_Short",
+    "Strength",
+    "Recovery",
+    "Rest",
+]
+
+WEEKDAYS = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 
 
 @click.group()
@@ -306,6 +328,100 @@ def today(
     click.echo(f"Rationale: {result['rationale'] or '(none)'}")
     if result["check_recovery_week_trigger"]:
         click.echo("[Flag: check_recovery_week_trigger]")
+
+
+@cli.command(name="plan-week")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+@click.option("--monday", type=click.Choice(SESSION_TYPES))
+@click.option("--tuesday", type=click.Choice(SESSION_TYPES))
+@click.option("--wednesday", type=click.Choice(SESSION_TYPES))
+@click.option("--thursday", type=click.Choice(SESSION_TYPES))
+@click.option("--friday", type=click.Choice(SESSION_TYPES))
+@click.option("--saturday", type=click.Choice(SESSION_TYPES))
+@click.option("--sunday", type=click.Choice(SESSION_TYPES))
+@click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Print the currently stored plan for --week-start instead of writing one.",
+)
+def plan_week(
+    week_start: str,
+    monday: str | None,
+    tuesday: str | None,
+    wednesday: str | None,
+    thursday: str | None,
+    friday: str | None,
+    saturday: str | None,
+    sunday: str | None,
+    show: bool,
+):
+    """Write (or show) the upcoming week's planned sessions.
+
+    Persists to weekly_plans.planned_sessions_json as a JSON list of
+    {"day": <weekday name>, "session_type": <one of SESSION_TYPES>} dicts —
+    the same shape apex_coach.engines.weekly_engine already reads/writes.
+
+    Inserts a new weekly_plans row if --week-start hasn't been planned yet,
+    or overwrites planned_sessions_json in place if it has.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    if show:
+        week = plan_repo.get_weekly_plan(week_start)
+        if week is None:
+            raise click.ClickException(
+                f"no weekly plan stored for week_start_date {week_start!r}"
+            )
+        sessions = json.loads(week["planned_sessions_json"] or "[]")
+        if not sessions:
+            click.echo(f"No sessions planned for week starting {week_start}.")
+            return
+        click.echo(f"Plan for week starting {week_start}:")
+        for entry in sessions:
+            click.echo(f"  {entry['day']}: {entry['session_type']}")
+        return
+
+    day_values = {
+        "Monday": monday,
+        "Tuesday": tuesday,
+        "Wednesday": wednesday,
+        "Thursday": thursday,
+        "Friday": friday,
+        "Saturday": saturday,
+        "Sunday": sunday,
+    }
+    missing = [day for day in WEEKDAYS if day_values[day] is None]
+    if missing:
+        raise click.ClickException(
+            "missing --session-type for: " + ", ".join(d.lower() for d in missing)
+        )
+
+    planned_sessions = [
+        {"day": day, "session_type": day_values[day]} for day in WEEKDAYS
+    ]
+    planned_sessions_json = json.dumps(planned_sessions)
+
+    if plan_repo.get_weekly_plan(week_start) is None:
+        plan_repo.insert_weekly_plan(
+            week_start_date=week_start,
+            planned_sessions_json=planned_sessions_json,
+        )
+    else:
+        plan_repo.update_weekly_plan(
+            week_start,
+            planned_sessions_json=planned_sessions_json,
+        )
+
+    click.echo(f"Plan saved for week starting {week_start}:")
+    for entry in planned_sessions:
+        click.echo(f"  {entry['day']}: {entry['session_type']}")
 
 
 if __name__ == "__main__":
