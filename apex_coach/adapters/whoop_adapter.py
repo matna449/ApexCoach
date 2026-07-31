@@ -34,7 +34,7 @@ from apex_coach.models.pydantic_models import (
 WHOOP_BASE_URL = "https://api.prod.whoop.com"
 WHOOP_AUTH_URL = f"{WHOOP_BASE_URL}/oauth/oauth2/auth"
 WHOOP_TOKEN_URL = f"{WHOOP_BASE_URL}/oauth/oauth2/token"
-WHOOP_SCOPE = "read:recovery read:sleep read:strain read:body_measurement"
+WHOOP_SCOPE = "read:recovery read:cycles read:sleep offline"
 
 RATE_LIMIT_RETRY_DELAY_S = 60
 RATE_LIMIT_MAX_RETRIES = 3
@@ -308,9 +308,9 @@ class RealWhoopAdapter:
         # WHOOP API calls before the problem is discovered (§7.1: low-
         # frequency application, budget every call).
         try:
-            recovery = WhoopRecovery(**self._get_scored_record("/v1/recovery?limit=1"))
-            cycle = WhoopCycle(**self._get("/v1/cycle?limit=1")["records"][0])
-            sleep = WhoopSleep(**self._get("/v1/activity/sleep?limit=1")["records"][0])
+            recovery = WhoopRecovery(**self._get_scored_record("/v2/recovery?limit=1"))
+            cycle = WhoopCycle(**self._get("/v2/cycle?limit=1")["records"][0])
+            sleep = WhoopSleep(**self._get("/v2/activity/sleep?limit=1")["records"][0])
             return WhoopDailyPayload(date=date, recovery=recovery, cycle=cycle, sleep=sleep)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e
