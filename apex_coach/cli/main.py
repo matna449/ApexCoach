@@ -17,6 +17,7 @@ from apex_coach.adapters.whoop_adapter import (
 )
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
+from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
@@ -30,6 +31,8 @@ ZONE_LABELS = {
     "zone4": "Zone 4 (Threshold)",
     "zone5": "Zone 5 (VO2max)",
 }
+
+PERIODISATION_PHASES = ["BASE", "BUILD", "PEAK", "TAPER", "RECOVERY"]
 
 
 @click.group()
@@ -254,6 +257,79 @@ def today(
     click.echo(f"Rationale: {result['rationale'] or '(none)'}")
     if result["check_recovery_week_trigger"]:
         click.echo("[Flag: check_recovery_week_trigger]")
+
+
+@cli.command(name="set-monthly-target")
+@click.option(
+    "--month-start-date",
+    required=True,
+    help="ISO 8601 date for the first day of the month, e.g. 2026-08-01.",
+)
+@click.option(
+    "--periodisation-phase",
+    type=click.Choice(PERIODISATION_PHASES),
+    help="Training block phase for this month.",
+)
+@click.option(
+    "--load-target-total",
+    type=float,
+    help="Planned total training load for the month.",
+)
+@click.option(
+    "--race-date",
+    default=None,
+    help="ISO 8601 date of the target race this block is building toward, if any.",
+)
+@click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Print the currently stored target for --month-start-date instead of writing.",
+)
+def set_monthly_target(
+    month_start_date: str,
+    periodisation_phase: str | None,
+    load_target_total: float | None,
+    race_date: str | None,
+    show: bool,
+):
+    """Set (or view) a training block's monthly target: periodisation phase,
+    total load target, and race date. Writes via PlanRepository.insert_monthly_target()
+    on first write for a given --month-start-date, update_monthly_target() thereafter."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    repo = PlanRepository(engine)
+
+    if show:
+        target = repo.get_monthly_target(month_start_date)
+        if target is None:
+            click.echo(f"No monthly target stored for {month_start_date}.")
+            return
+        click.echo(f"Month start date: {target['month_start_date']}")
+        click.echo(f"Periodisation phase: {target['periodisation_phase']}")
+        click.echo(f"Load target total: {target['load_target_total']}")
+        click.echo(f"Race date: {target['race_date']}")
+        return
+
+    if periodisation_phase is None or load_target_total is None:
+        raise click.ClickException(
+            "--periodisation-phase and --load-target-total are required "
+            "(unless --show is passed to view an existing target)."
+        )
+
+    fields = {
+        "periodisation_phase": periodisation_phase,
+        "load_target_total": load_target_total,
+        "race_date": race_date,
+    }
+
+    existing = repo.get_monthly_target(month_start_date)
+    if existing is None:
+        repo.insert_monthly_target(month_start_date=month_start_date, **fields)
+        click.echo(f"Monthly target created for {month_start_date}.")
+    else:
+        repo.update_monthly_target(month_start_date, **fields)
+        click.echo(f"Monthly target updated for {month_start_date}.")
 
 
 if __name__ == "__main__":
