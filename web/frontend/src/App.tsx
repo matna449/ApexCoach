@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import LoadActualVsTargetChart from './LoadActualVsTargetChart'
 
 // F16.1 scaffolding: prove the FastAPI <-> React round trip works, nothing
 // more. Fetches the backend directly (backend CORS in web/backend/main.py
@@ -37,6 +38,7 @@ function App() {
       {health && (
         <pre data-testid="health-response">{JSON.stringify(health, null, 2)}</pre>
       )}
+      <LoadActualVsTargetChart />
     </main>
   )
 }
