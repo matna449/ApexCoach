@@ -80,7 +80,7 @@ MOCK_CYCLE_PAYLOAD = {
 }
 
 MOCK_SLEEP_PAYLOAD = {
-    "id": 84729301,
+    "id": "3d0590ff-3739-4d9f-b14f-e7525a169699",
     "created_at": "2026-06-23T06:14:00.000Z",
     "score_state": "SCORED",
     "score": {
@@ -302,9 +302,9 @@ class RealWhoopAdapter:
         # WHOOP API calls before the problem is discovered (§7.1: low-
         # frequency application, budget every call).
         try:
-            recovery = WhoopRecovery(**self._get_scored_record("/v2/recovery?limit=1"))
-            cycle = WhoopCycle(**self._get("/v2/cycle?limit=1")["records"][0])
-            sleep = WhoopSleep(**self._get("/v2/activity/sleep?limit=1")["records"][0])
+            recovery = WhoopRecovery(**self._get_scored_record("/developer/v2/recovery?limit=1"))
+            cycle = WhoopCycle(**self._get("/developer/v2/cycle?limit=1")["records"][0])
+            sleep = WhoopSleep(**self._get("/developer/v2/activity/sleep?limit=1")["records"][0])
             return WhoopDailyPayload(date=date, recovery=recovery, cycle=cycle, sleep=sleep)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e

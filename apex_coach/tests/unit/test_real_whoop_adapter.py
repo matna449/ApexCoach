@@ -56,7 +56,7 @@ CYCLE_PAYLOAD = {
 SLEEP_PAYLOAD = {
     "records": [
         {
-            "id": 1,
+            "id": "3d0590ff-3739-4d9f-b14f-e7525a169699",
             "created_at": "2026-07-30T06:00:00.000Z",
             "score_state": "SCORED",
             "score": {
@@ -171,10 +171,10 @@ def test_run_authorization_flow_empty_code_raises():
 
 def test_get_daily_payload_happy_path(httpx_mock, token_repo, sleeps):
     _, sleep_fn = sleeps
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
     httpx_mock.add_response(
-        url="https://api.prod.whoop.com/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
+        url="https://api.prod.whoop.com/developer/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
     )
 
     adapter = _adapter(token_repo, sleep_fn)
@@ -214,10 +214,10 @@ def test_refreshes_when_token_near_expiry(httpx_mock, sleeps):
         url="https://api.prod.whoop.com/oauth/oauth2/token",
         json={"access_token": "fresh-token", "refresh_token": "new-refresh", "expires_in": 3600},
     )
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
     httpx_mock.add_response(
-        url="https://api.prod.whoop.com/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
+        url="https://api.prod.whoop.com/developer/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
     )
 
     adapter = RealWhoopAdapter(repo, "cid", "secret", sleep_fn=sleep_fn)
@@ -231,7 +231,7 @@ def test_refreshes_when_token_near_expiry(httpx_mock, sleeps):
 
 def test_401_raises_reauthorization_required(httpx_mock, token_repo, sleeps):
     _, sleep_fn = sleeps
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=401)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=401)
 
     adapter = _adapter(token_repo, sleep_fn)
     with pytest.raises(WhoopReauthorizationRequiredError):
@@ -240,11 +240,11 @@ def test_401_raises_reauthorization_required(httpx_mock, token_repo, sleeps):
 
 def test_429_retries_then_succeeds(httpx_mock, token_repo, sleeps):
     calls, sleep_fn = sleeps
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=429)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=429)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
     httpx_mock.add_response(
-        url="https://api.prod.whoop.com/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
+        url="https://api.prod.whoop.com/developer/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
     )
 
     adapter = _adapter(token_repo, sleep_fn)
@@ -257,7 +257,7 @@ def test_429_retries_then_succeeds(httpx_mock, token_repo, sleeps):
 def test_429_exhausts_retries_and_raises(httpx_mock, token_repo, sleeps):
     calls, sleep_fn = sleeps
     for _ in range(RATE_LIMIT_MAX_RETRIES + 1):
-        httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=429)
+        httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=429)
 
     adapter = _adapter(token_repo, sleep_fn)
     with pytest.raises(WhoopRateLimitError):
@@ -267,11 +267,11 @@ def test_429_exhausts_retries_and_raises(httpx_mock, token_repo, sleeps):
 
 def test_503_retries_once_then_succeeds(httpx_mock, token_repo, sleeps):
     calls, sleep_fn = sleeps
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=503)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=503)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
     httpx_mock.add_response(
-        url="https://api.prod.whoop.com/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
+        url="https://api.prod.whoop.com/developer/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
     )
 
     adapter = _adapter(token_repo, sleep_fn)
@@ -281,8 +281,8 @@ def test_503_retries_once_then_succeeds(httpx_mock, token_repo, sleeps):
 
 def test_500_twice_raises_server_error(httpx_mock, token_repo, sleeps):
     _, sleep_fn = sleeps
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=500)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", status_code=500)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=500)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", status_code=500)
 
     adapter = _adapter(token_repo, sleep_fn)
     with pytest.raises(WhoopServerError):
@@ -292,11 +292,11 @@ def test_500_twice_raises_server_error(httpx_mock, token_repo, sleeps):
 def test_pending_score_retries_once_then_succeeds(httpx_mock, token_repo, sleeps):
     calls, sleep_fn = sleeps
     pending = {"records": [{**RECOVERY_PAYLOAD["records"][0], "score_state": "PENDING_SCORE", "score": None}]}
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=pending)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=pending)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=RECOVERY_PAYLOAD)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/cycle?limit=1", json=CYCLE_PAYLOAD)
     httpx_mock.add_response(
-        url="https://api.prod.whoop.com/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
+        url="https://api.prod.whoop.com/developer/v2/activity/sleep?limit=1", json=SLEEP_PAYLOAD
     )
 
     adapter = _adapter(token_repo, sleep_fn)
@@ -309,8 +309,8 @@ def test_pending_score_retries_once_then_succeeds(httpx_mock, token_repo, sleeps
 def test_pending_score_still_pending_after_retry_raises(httpx_mock, token_repo, sleeps):
     _, sleep_fn = sleeps
     pending = {"records": [{**RECOVERY_PAYLOAD["records"][0], "score_state": "PENDING_SCORE", "score": None}]}
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=pending)
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=pending)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=pending)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=pending)
 
     adapter = _adapter(token_repo, sleep_fn)
     with pytest.raises(WhoopPendingScoreError):
@@ -329,7 +329,7 @@ def test_network_timeout_raises_adapter_timeout_error(httpx_mock, token_repo, sl
 def test_malformed_response_raises_adapter_malformed_response_error(httpx_mock, token_repo, sleeps):
     _, sleep_fn = sleeps
     bad_payload = {"records": [{"cycle_id": "not-an-int", "created_at": "bad", "score_state": "SCORED"}]}
-    httpx_mock.add_response(url="https://api.prod.whoop.com/v2/recovery?limit=1", json=bad_payload)
+    httpx_mock.add_response(url="https://api.prod.whoop.com/developer/v2/recovery?limit=1", json=bad_payload)
 
     adapter = _adapter(token_repo, sleep_fn)
     with pytest.raises(AdapterMalformedResponseError):
