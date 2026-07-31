@@ -347,9 +347,15 @@ The monthly engine accumulates load from all completed sessions and compares aga
 
 ```
 Session Load Score (AU):
-  For run/ride/swim sessions (HR-based):
-    load_au = (duration_minutes * avg_hr_bpm * grade_factor) / 1000
-    grade_factor: flat=1.0, 1-3%=1.05, 3-6%=1.12, 6-10%=1.22, >10%=1.35
+  For run/ride/swim sessions (HR-based) — Banister Impulse-Response (TRIMP),
+  docs/adr/0024. Self-adjusts for terrain via HR response; no separate grade
+  term:
+    delta_hr_ratio = (avg_hr_bpm - resting_hr) / (max_hr - resting_hr)
+    load_au = duration_minutes * delta_hr_ratio * 0.64 * e^(b * delta_hr_ratio)
+    b = 1.92 (male) or 1.67 (female) -- athlete_profile.sex
+    resting_hr: day-of daily_metrics.whoop_rhr_bpm, falling back to
+                athlete_profile.baseline_resting_hr if that date has none
+    max_hr: athlete_profile.max_hr
 
   For strength sessions (RPE-based, no HR zone target):
     load_au = (duration_minutes * rpe) / 6
