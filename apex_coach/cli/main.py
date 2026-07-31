@@ -13,6 +13,7 @@ from apex_coach.adapters.whoop_adapter import (
 )
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
+from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
 from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
@@ -40,6 +41,17 @@ def zones(max_hr: int, resting_hr: int):
     zone_boundaries = calculate_zones(max_hr, resting_hr)
     for zone_name, (lower, upper) in zone_boundaries.items():
         click.echo(f"{ZONE_LABELS[zone_name]}: {lower}-{upper} bpm")
+
+
+@cli.command(name="init-db")
+def init_db():
+    """Create the SQLite schema (all tables in db/schema.py) if it doesn't
+    already exist. Run this once before connect-whoop or any other command
+    that touches the database — nothing else creates the schema."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    metadata.create_all(engine)
+    click.echo(f"Database initialized at {settings.database_url}")
 
 
 @cli.command(name="connect-whoop")

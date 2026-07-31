@@ -39,6 +39,13 @@ See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model
 | v2.0 — Azure Web App | FastAPI backend, PostgreSQL, minimal React frontend, multi-user |
 | v3.0 — Expanded Intelligence | Coros API, auto periodisation, nutrition data, coach collaboration |
 
+## Running locally
+
+1. Copy `.env.example` to `.env` and fill in `APEX_ENCRYPTION_KEY` (and provider credentials once you've registered OAuth apps).
+2. `apex_coach init-db` — creates the SQLite schema. Nothing else does this; run it once before any command that touches the database.
+3. `apex_coach connect-whoop` — one-time OAuth handshake (see `docs/adr/0018`).
+4. `apex_coach whoop-smoke --real` — verify the connection.
+
 ## Working with this repo
 
 This repo also carries the design-decision infrastructure for stress-testing plans against the docs above:
