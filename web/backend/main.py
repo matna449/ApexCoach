@@ -31,8 +31,8 @@ from apex_coach.db.metrics_repository import MetricsRepository
 # tickets to build on.
 settings = get_settings()
 engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
-repo = PlanRepository(engine)
-repo = MetricsRepository(engine)
+plan_repo = PlanRepository(engine)
+metrics_repo = MetricsRepository(engine)
 
 app = FastAPI(title="ApexCoach Web API")
 
@@ -112,7 +112,7 @@ def load_weekly(
     )
     result = []
     for week_start_date in dates:
-        row = repo.get_weekly_plan(week_start_date)
+        row = plan_repo.get_weekly_plan(week_start_date)
         result.append(
             {
                 "week_start_date": week_start_date,
@@ -143,7 +143,7 @@ def load_monthly(
     )
     result = []
     for month_start_date in dates:
-        row = repo.get_monthly_target(month_start_date)
+        row = plan_repo.get_monthly_target(month_start_date)
         result.append(
             {
                 "month_start_date": month_start_date,
@@ -152,6 +152,8 @@ def load_monthly(
             }
         )
     return {"months": result}
+
+
 DEFAULT_TREND_WINDOW_DAYS = 30
 
 
@@ -179,5 +181,5 @@ def hrv_trend(
     if start is None:
         start = (date.today() - timedelta(days=DEFAULT_TREND_WINDOW_DAYS - 1)).isoformat()
 
-    rows = repo.get_daily_metrics_range(start, end)
+    rows = metrics_repo.get_daily_metrics_range(start, end)
     return [{"date": row["date"], "whoop_hrv_ms": row["whoop_hrv_ms"]} for row in rows]
