@@ -171,6 +171,16 @@ def test_get_activities_for_date(repo):
     assert {r["strava_id"] for r in rows} == {"strava-1", "strava-2"}
 
 
+def test_get_activities_range_is_inclusive_and_ordered(repo):
+    for date in ["2026-07-01", "2026-07-15", "2026-07-30", "2026-08-01"]:
+        repo.insert_daily_metrics(date=date)
+        repo.save_activity(strava_id=f"strava-{date}", date=date)
+
+    rows = repo.get_activities_range("2026-07-01", "2026-07-30")
+
+    assert [r["date"] for r in rows] == ["2026-07-01", "2026-07-15", "2026-07-30"]
+
+
 # -- session_scores -----------------------------------------------------------
 
 
