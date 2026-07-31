@@ -19,11 +19,7 @@ from apex_coach.adapters.errors import (
     AdapterTimeoutError,
     AdapterUnavailableError,
 )
-from apex_coach.adapters.oauth_pkce import (
-    generate_pkce_pair,
-    generate_state,
-    wait_for_callback,
-)
+from apex_coach.adapters.oauth_pkce import generate_pkce_pair, generate_state
 from apex_coach.models.pydantic_models import (
     WhoopCycle,
     WhoopDailyPayload,
@@ -176,32 +172,30 @@ def refresh_tokens(client_id: str, client_secret: str, refresh_token: str) -> di
 
 
 def run_authorization_flow(
-    client_id: str, client_secret: str, redirect_uri: str, callback_timeout_seconds: int = 120
+    client_id: str, client_secret: str, redirect_uri: str, input_fn=input
 ) -> dict:
-    """The one-time browser handshake (API Contract §2.1 STEP 2-4). Blocks
-    until the redirect arrives at redirect_uri (docs/adr/0018), or raises
-    TimeoutError. Returns the raw token response (access_token,
-    refresh_token, expires_in)."""
-    parsed_redirect = urllib.parse.urlparse(redirect_uri)
-    host = parsed_redirect.hostname
-    port = parsed_redirect.port
-    path = parsed_redirect.path or "/"
-
+    """The one-time browser handshake (API Contract §2.1 STEP 2-4). WHOOP
+    rejects http://localhost redirect URIs (docs/adr/0018's 2026-07-31
+    update), so redirect_uri points at a hosted callback landing page that
+    displays the code/state for the athlete to paste back here, rather than
+    a local server receiving the redirect directly. Returns the raw token
+    response (access_token, refresh_token, expires_in)."""
     code_verifier, code_challenge = generate_pkce_pair()
     state = generate_state()
     auth_url = build_authorization_url(client_id, redirect_uri, state, code_challenge)
 
     print(f"Open this URL to authorize WHOOP access:\n\n{auth_url}\n")
-    result = wait_for_callback(host, port, path, timeout_seconds=callback_timeout_seconds)
+    print("After approving, paste the code and state shown on the callback page below.\n")
 
-    if result.error:
-        raise WhoopReauthorizationRequiredError(f"authorization denied: {result.error}")
-    if result.state != state:
+    code = input_fn("Authorization code: ").strip()
+    returned_state = input_fn("State: ").strip()
+
+    if returned_state != state:
         raise WhoopReauthorizationRequiredError("state mismatch — possible CSRF, aborting")
-    if not result.code:
+    if not code:
         raise WhoopReauthorizationRequiredError("no authorization code received")
 
-    return exchange_code_for_tokens(client_id, client_secret, redirect_uri, result.code, code_verifier)
+    return exchange_code_for_tokens(client_id, client_secret, redirect_uri, code, code_verifier)
 
 
 # -- RealWhoopAdapter (API Contract §2.2-§2.4, §6.1) -------------------------

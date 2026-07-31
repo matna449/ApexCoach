@@ -58,7 +58,7 @@ def connect_whoop():
         tokens = run_authorization_flow(
             settings.whoop_client_id, settings.whoop_client_secret, settings.whoop_redirect_uri
         )
-    except (TimeoutError, AdapterError) as e:
+    except AdapterError as e:
         raise click.ClickException(str(e)) from e
 
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -15,6 +16,7 @@ from apex_coach.adapters.whoop_adapter import (
     build_authorization_url,
     exchange_code_for_tokens,
     refresh_tokens,
+    run_authorization_flow,
 )
 from apex_coach.db.engine import create_engine
 from apex_coach.db.schema import metadata
@@ -122,6 +124,46 @@ def test_refresh_tokens(httpx_mock):
     )
     result = refresh_tokens("cid", "secret", "old-refresh")
     assert result["access_token"] == "a2"
+
+
+def test_run_authorization_flow_happy_path_pastes_code_and_state(httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.prod.whoop.com/oauth/oauth2/token",
+        json={"access_token": "a", "refresh_token": "r", "expires_in": 3600},
+    )
+    inputs = iter(["code123", "fixed-state"])
+    with patch("apex_coach.adapters.whoop_adapter.generate_state", return_value="fixed-state"):
+        result = run_authorization_flow(
+            "cid",
+            "secret",
+            "https://matna449.github.io/ApexCoach/callback.html",
+            input_fn=lambda _: next(inputs),
+        )
+    assert result["access_token"] == "a"
+
+
+def test_run_authorization_flow_state_mismatch_raises():
+    inputs = iter(["code123", "wrong-state"])
+    with patch("apex_coach.adapters.whoop_adapter.generate_state", return_value="fixed-state"):
+        with pytest.raises(WhoopReauthorizationRequiredError):
+            run_authorization_flow(
+                "cid",
+                "secret",
+                "https://matna449.github.io/ApexCoach/callback.html",
+                input_fn=lambda _: next(inputs),
+            )
+
+
+def test_run_authorization_flow_empty_code_raises():
+    inputs = iter(["", "fixed-state"])
+    with patch("apex_coach.adapters.whoop_adapter.generate_state", return_value="fixed-state"):
+        with pytest.raises(WhoopReauthorizationRequiredError):
+            run_authorization_flow(
+                "cid",
+                "secret",
+                "https://matna449.github.io/ApexCoach/callback.html",
+                input_fn=lambda _: next(inputs),
+            )
 
 
 # -- RealWhoopAdapter.get_daily_payload — happy path -------------------------

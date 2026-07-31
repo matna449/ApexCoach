@@ -18,7 +18,7 @@ class Settings:
     database_url: str
     whoop_client_id: str | None = None
     whoop_client_secret: str | None = None
-    whoop_redirect_uri: str = "http://localhost:8080/callback"
+    whoop_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
 
 
 def get_settings() -> Settings:
@@ -27,5 +27,7 @@ def get_settings() -> Settings:
         database_url=os.getenv("DATABASE_URL", "sqlite:///./apex_coach.db"),
         whoop_client_id=os.getenv("WHOOP_CLIENT_ID"),
         whoop_client_secret=os.getenv("WHOOP_CLIENT_SECRET"),
-        whoop_redirect_uri=os.getenv("WHOOP_REDIRECT_URI", "http://localhost:8080/callback"),
+        whoop_redirect_uri=os.getenv(
+            "WHOOP_REDIRECT_URI", "https://matna449.github.io/ApexCoach/callback.html"
+        ),
     )
