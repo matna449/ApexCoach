@@ -978,6 +978,33 @@ def morning(date: str | None, session_type: str | None, real: bool):
     if explanation_result.explanation:
         click.echo(f"Explanation: {explanation_result.explanation}")
 
+    # 11. Conversational follow-up loop (PRD / ADR-0001) — only offered when
+    # there's an explanation to follow up on; if Ollama never produced one,
+    # ask_followup() would have nothing to anchor the prior-assistant-turn
+    # message to.
+    if explanation_result.explanation:
+        _run_followup_loop(ollama_adapter, decision_context, explanation_result.explanation)
+
+
+def _run_followup_loop(ollama_adapter, decision_context: dict, prior_explanation: str) -> None:
+    while True:
+        question = click.prompt(
+            "Ask a follow-up (why? what if I do it anyway?), or press Enter to finish",
+            default="",
+            show_default=False,
+        )
+        if not question:
+            return
+
+        followup_result = ollama_adapter.ask_followup(
+            decision_context, prior_explanation, question
+        )
+        if followup_result.banner:
+            click.echo(f"[{followup_result.severity}] {followup_result.banner}")
+        if followup_result.explanation:
+            click.echo(followup_result.explanation)
+            prior_explanation = followup_result.explanation
+
 
 if __name__ == "__main__":
     cli()
