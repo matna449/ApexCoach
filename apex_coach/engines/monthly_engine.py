@@ -44,17 +44,25 @@ def flag_load_threshold(load_pct: float) -> str | None:
     return None
 
 
-def load_au_for_activity(activity: dict) -> float:
+def load_au_for_activity(
+    activity: dict,
+    resting_hr: float | None = None,
+    max_hr: float | None = None,
+    sex: str | None = None,
+) -> float:
+    """resting_hr/max_hr/sex are only required when activity_type is
+    HR-based (docs/adr/0024's TRIMP calculation) — irrelevant for
+    RPE-based (Strength) or duration-based (Yoga) activities, so callers
+    iterating over a mixed batch don't need to resolve them universally."""
     duration_minutes = (activity.get("duration_seconds") or 0) / 60
     activity_type = activity["activity_type"]
-    grade_pct = 0.0
-    if activity.get("distance_metres") and activity["distance_metres"] > 0:
-        grade_pct = (activity.get("elevation_gain_m") or 0.0) / activity["distance_metres"] * 100
     return calculate_load_au(
         activity_type,
         duration_minutes,
         avg_hr_bpm=activity.get("avg_hr_bpm"),
-        grade_pct=grade_pct,
+        resting_hr=resting_hr,
+        max_hr=max_hr,
+        sex=sex,
         rpe=activity.get("rpe"),
     )
 
@@ -242,20 +250,33 @@ def run_monthly_review(
     today_date = date.fromisoformat(today) if today else datetime.now().date()
     days_elapsed = max(1, (min(today_date, month_end) - month_start).days + 1)
 
+    daily_rows = metrics_repo.get_daily_metrics_range(month_start.isoformat(), month_end.isoformat())
+    hrv_by_date = {row["date"]: row["whoop_hrv_ms"] for row in daily_rows if row["whoop_hrv_ms"] is not None}
+    hrv_weekly_avgs_ms = _weekly_averages(hrv_by_date, month_start, month_end)
+    resting_hr_by_date = {
+        row["date"]: row["whoop_rhr_bpm"] for row in daily_rows if row["whoop_rhr_bpm"] is not None
+    }
+
     activities = metrics_repo.get_activities_range(
         month_start.isoformat(), month_end.isoformat()
     )
-    load_actual_au = sum(load_au_for_activity(a) for a in activities)
+    profile = plan_repo.get_athlete_profile()
+    load_actual_au = sum(
+        load_au_for_activity(
+            a,
+            resting_hr=resting_hr_by_date.get(a["date"])
+            or (profile.get("baseline_resting_hr") if profile else None),
+            max_hr=profile.get("max_hr") if profile else None,
+            sex=profile.get("sex") if profile else None,
+        )
+        for a in activities
+    )
 
     session_scores = []
     for activity in activities:
         score = metrics_repo.get_session_score(activity["id"])
         if score is not None:
             session_scores.append({**score, "session_type": activity.get("intended_session_type")})
-
-    daily_rows = metrics_repo.get_daily_metrics_range(month_start.isoformat(), month_end.isoformat())
-    hrv_by_date = {row["date"]: row["whoop_hrv_ms"] for row in daily_rows if row["whoop_hrv_ms"] is not None}
-    hrv_weekly_avgs_ms = _weekly_averages(hrv_by_date, month_start, month_end)
 
     sessions_skipped = 0
     sessions_written_off = 0

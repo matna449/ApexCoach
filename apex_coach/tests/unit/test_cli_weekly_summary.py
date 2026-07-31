@@ -74,6 +74,8 @@ def test_weekly_summary_full_chain_reschedules_missed_key_session(tmp_path):
     # synced) — Monday's HIIT was not, and has already passed by Wednesday.
     engine = create_engine(str(db_path))
     metrics_repo = MetricsRepository(engine)
+    # TRIMP load calculation (docs/adr/0024) needs an athlete profile.
+    PlanRepository(engine).insert_athlete_profile(max_hr=190, baseline_resting_hr=50, sex="MALE")
     metrics_repo.insert_daily_metrics(date="2026-08-04")
     metrics_repo.save_activity(
         strava_id="111",

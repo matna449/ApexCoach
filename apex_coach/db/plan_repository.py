@@ -8,7 +8,7 @@ only settable via a dedicated targeted update.
 
 import sqlalchemy as sa
 
-from apex_coach.db.schema import decisions, monthly_targets, weekly_plans
+from apex_coach.db.schema import athlete_profile, decisions, monthly_targets, weekly_plans
 
 
 def _row_to_dict(row) -> dict:
@@ -114,4 +114,28 @@ class PlanRepository:
                 .order_by(decisions.c.created_at.desc())
                 .limit(1)
             ).one_or_none()
+        return _row_to_dict(row) if row is not None else None
+
+    # -- athlete_profile ----------------------------------------------------
+    # Single global row (docs/adr/0023: single-user, no per-athlete keying) —
+    # unlike weekly_plans/monthly_targets there's no natural business key to
+    # target an update by, so update_athlete_profile() updates whichever one
+    # row exists.
+
+    def insert_athlete_profile(self, **fields) -> str:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                athlete_profile.insert().values(**fields).returning(athlete_profile.c.id)
+            )
+            return result.scalar_one()
+
+    def update_athlete_profile(self, **fields) -> None:
+        with self._engine.begin() as conn:
+            result = conn.execute(athlete_profile.update().values(**fields))
+            if result.rowcount == 0:
+                raise ValueError("no athlete_profile row exists yet")
+
+    def get_athlete_profile(self) -> dict | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(sa.select(athlete_profile)).one_or_none()
         return _row_to_dict(row) if row is not None else None

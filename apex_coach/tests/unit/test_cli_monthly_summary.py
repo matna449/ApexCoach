@@ -59,6 +59,8 @@ def test_monthly_summary_full_chain_persists_and_prints_summary(tmp_path):
     plan_repo.insert_monthly_target(
         month_start_date=MONTH_START, periodisation_phase="BUILD", load_target_total=1000.0
     )
+    # TRIMP load calculation (docs/adr/0024) needs an athlete profile.
+    plan_repo.insert_athlete_profile(max_hr=190, baseline_resting_hr=50, sex="MALE")
     _seed_activity_with_score(metrics_repo, "2026-08-03", "s1", 91.2, overpush=True)
     _seed_activity_with_score(metrics_repo, "2026-08-10", "s2", 70.0)
     metrics_repo.upsert_daily_metrics("2026-08-04", whoop_hrv_ms=74.0)

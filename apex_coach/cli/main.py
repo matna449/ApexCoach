@@ -58,6 +58,11 @@ ZONE_LABELS = {
 
 PERIODISATION_PHASES = ["BASE", "BUILD", "PEAK", "TAPER", "RECOVERY"]
 
+# docs/adr/0024 — the Banister TRIMP formula's exponential weighting
+# constant is only calibrated for these two categories in the source
+# research.
+ATHLETE_SEX_CHOICES = ["MALE", "FEMALE"]
+
 # Canonical session-type vocabulary — must match the `today` command's
 # --session-type choices and what the decision/weekly engines expect.
 SESSION_TYPES = [
@@ -385,9 +390,20 @@ def today(
     type=click.Choice(SCORABLE_SESSION_TYPES),
     help="Which session this activity was meant to be — resolves the intended HR zone.",
 )
-@click.option("--max-hr", type=int, required=True, help="Max HR (bpm), for zone resolution.")
 @click.option(
-    "--resting-hr", type=int, required=True, help="Resting HR (bpm), for zone resolution."
+    "--max-hr",
+    type=int,
+    default=None,
+    help="Max HR (bpm), for zone resolution and TRIMP load. Defaults from the "
+    "stored athlete profile (set-athlete-profile) if omitted.",
+)
+@click.option(
+    "--resting-hr",
+    type=int,
+    default=None,
+    help="Resting HR (bpm), for zone resolution. Defaults from the stored athlete "
+    "profile if omitted. TRIMP load calculation prefers the day-of WHOOP resting "
+    "HR over this flag regardless (docs/adr/0024).",
 )
 @click.option(
     "--since-ts",
@@ -421,8 +437,8 @@ def today(
 )
 def sync_session(
     session_type: str,
-    max_hr: int,
-    resting_hr: int,
+    max_hr: int | None,
+    resting_hr: int | None,
     since_ts: int,
     planned_load: float | None,
     rpe: int | None,
@@ -440,6 +456,20 @@ def sync_session(
     settings = get_settings()
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
     repo = MetricsRepository(engine)
+    plan_repo = PlanRepository(engine)
+    profile = plan_repo.get_athlete_profile()
+
+    max_hr = max_hr if max_hr is not None else (profile.get("max_hr") if profile else None)
+    resting_hr = (
+        resting_hr
+        if resting_hr is not None
+        else (profile.get("baseline_resting_hr") if profile else None)
+    )
+    if max_hr is None or resting_hr is None:
+        raise click.ClickException(
+            "--max-hr/--resting-hr not provided and no athlete profile stored — "
+            "pass the flags, or run `set-athlete-profile` first."
+        )
 
     if real:
         if not settings.strava_client_id or not settings.strava_client_secret:
@@ -486,16 +516,28 @@ def sync_session(
     if rpe is None:
         rpe = click.prompt("RPE for this session (1-10)", type=click.IntRange(1, 10))
 
+    date_str = activity.start_date.date().isoformat()
+    day_metrics = repo.get_daily_metrics(date_str)
+
     duration_minutes = activity.elapsed_time / 60
     try:
         if activity.type == "WeightTraining":
             load_score = calculate_load_au(activity.type, duration_minutes, rpe=rpe)
         else:
+            # TRIMP prefers the day-of WHOOP resting HR over the athlete
+            # profile / --resting-hr flag (docs/adr/0024) — resting HR
+            # genuinely fluctuates day to day, so the actual reading for
+            # this session's date is the most accurate signal available.
+            trimp_resting_hr = (
+                (day_metrics.get("whoop_rhr_bpm") if day_metrics else None) or resting_hr
+            )
             load_score = calculate_load_au(
                 activity.type,
                 duration_minutes,
                 avg_hr_bpm=activity.average_heartrate,
-                grade_pct=activity.grade_pct,
+                resting_hr=trimp_resting_hr,
+                max_hr=max_hr,
+                sex=profile.get("sex") if profile else None,
             )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
@@ -515,8 +557,7 @@ def sync_session(
     except ValueError as e:
         raise click.ClickException(str(e)) from e
 
-    date_str = activity.start_date.date().isoformat()
-    if repo.get_daily_metrics(date_str) is None:
+    if day_metrics is None:
         repo.insert_daily_metrics(date=date_str)
 
     strava_id = str(activity.id)
@@ -712,6 +753,60 @@ def set_monthly_target(
     else:
         repo.update_monthly_target(month_start_date, **fields)
         click.echo(f"Monthly target updated for {month_start_date}.")
+
+
+@cli.command(name="set-athlete-profile")
+@click.option("--max-hr", type=int, help="Max HR (bpm) — feeds TRIMP load calculation and zones.")
+@click.option(
+    "--baseline-resting-hr",
+    type=int,
+    help=(
+        "Fallback resting HR (bpm) for TRIMP load calculation, only used when a "
+        "session's date has no WHOOP resting HR recorded (docs/adr/0024)."
+    ),
+)
+@click.option("--sex", type=click.Choice(ATHLETE_SEX_CHOICES), help="Feeds TRIMP's exponential weighting constant.")
+@click.option(
+    "--show", is_flag=True, default=False, help="Print the currently stored profile instead of writing."
+)
+def set_athlete_profile(
+    max_hr: int | None, baseline_resting_hr: int | None, sex: str | None, show: bool
+):
+    """Set (or view) the athlete's profile: max HR, a fallback resting HR,
+    and sex (docs/adr/0024). Single global row — this is a single-user
+    system (docs/adr/0023). Writes via PlanRepository.insert_athlete_profile()
+    on first write, update_athlete_profile() thereafter."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    repo = PlanRepository(engine)
+
+    if show:
+        profile = repo.get_athlete_profile()
+        if profile is None:
+            click.echo("No athlete profile stored.")
+            return
+        click.echo(f"Max HR: {profile['max_hr']}")
+        click.echo(f"Baseline resting HR: {profile['baseline_resting_hr']}")
+        click.echo(f"Sex: {profile['sex']}")
+        return
+
+    existing = repo.get_athlete_profile()
+    fields = {
+        "max_hr": max_hr if max_hr is not None else (existing or {}).get("max_hr"),
+        "baseline_resting_hr": (
+            baseline_resting_hr
+            if baseline_resting_hr is not None
+            else (existing or {}).get("baseline_resting_hr")
+        ),
+        "sex": sex if sex is not None else (existing or {}).get("sex"),
+    }
+
+    if existing is None:
+        repo.insert_athlete_profile(**fields)
+        click.echo("Athlete profile created.")
+    else:
+        repo.update_athlete_profile(**fields)
+        click.echo("Athlete profile updated.")
 
 
 def _resolve_todays_session(plan_repo, date_str, session_type_flag):
@@ -1068,7 +1163,24 @@ def weekly_summary(week_start: str, today: str | None):
 
     # Read the week's activities + their session scores.
     week_activities = metrics_repo.get_activities_range(week_start, week_end_date.isoformat())
-    load_actual = sum(load_au_for_activity(a) for a in week_activities)
+    daily_rows = metrics_repo.get_daily_metrics_range(week_start, week_end_date.isoformat())
+    resting_hr_by_date = {
+        row["date"]: row["whoop_rhr_bpm"] for row in daily_rows if row["whoop_rhr_bpm"] is not None
+    }
+    profile = plan_repo.get_athlete_profile()
+    try:
+        load_actual = sum(
+            load_au_for_activity(
+                a,
+                resting_hr=resting_hr_by_date.get(a["date"])
+                or (profile.get("baseline_resting_hr") if profile else None),
+                max_hr=profile.get("max_hr") if profile else None,
+                sex=profile.get("sex") if profile else None,
+            )
+            for a in week_activities
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
     activities_by_date: dict[str, list] = {}
     for activity in week_activities:
         activities_by_date.setdefault(activity["date"], []).append(activity)
