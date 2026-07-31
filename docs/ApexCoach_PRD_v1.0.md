@@ -295,19 +295,17 @@ The system operates across three nested planning horizons. The monthly layer has
 
 - Banister Impulse-Response model for open-standard training load calculation.
 
-- NSDR / Yoga Nidra recommendation engine for nervous system reboot protocols.
-
-- Historical trend charts rendered to terminal or simple HTML report.
+- Minimal local web UI: a FastAPI façade over the existing engines/repositories (unchanged, not rewritten) plus a React frontend, with historical trend charts as its first screen. Local-only, single-user, SQLite — the CLI is not replaced. Supersedes the originally-scoped terminal/HTML trend-charts report (docs/adr/0023).
 
 - Full decision matrix test suite and 80%+ code coverage enforced by CI.
 
-### v2.0 — Azure Web App
+- NSDR / Yoga Nidra recommendation engine for nervous system reboot protocols — deprioritised for this milestone (docs/adr/0023), not dropped.
 
-- FastAPI backend replacing CLI.
+### v2.0 — Azure Web App
 
 - PostgreSQL on Azure replacing SQLite.
 
-- React or minimal HTML/CSS frontend with A/B test framework.
+- A/B test framework on the React frontend introduced in v1.5.
 
 - Mobile-accessible morning prompt via browser.
 
