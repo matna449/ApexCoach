@@ -6,6 +6,8 @@ import click
 
 from apex_coach.adapters.strava_adapter import MockStravaAdapter
 from apex_coach.adapters.whoop_adapter import MockWhoopAdapter
+from apex_coach.engines.daily_engine import make_decision
+from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
 from apex_coach.services.zone_calculator import calculate_zones
 
 ZONE_LABELS = {
@@ -73,6 +75,61 @@ def strava_smoke(since_ts: int):
         pace = activity.pace_sec_per_km
         click.echo(f"  Pace: {pace:.1f} sec/km" if pace is not None else "  Pace: n/a")
         click.echo(f"  Elevation gain: {activity.total_elevation_gain} m")
+
+
+@cli.command()
+@click.option(
+    "--session-type",
+    required=True,
+    type=click.Choice(
+        ["HIIT", "Threshold", "Zone2_Long", "Zone2_Short", "Strength", "Recovery", "Rest"]
+    ),
+)
+@click.option(
+    "--recovery-band", required=True, type=click.Choice([b.value for b in RecoveryBand])
+)
+@click.option(
+    "--hrv-signal", required=True, type=click.Choice([b.value for b in HRVDeltaBand])
+)
+@click.option(
+    "--soreness-band", required=True, type=click.Choice([b.value for b in SorenessBand])
+)
+@click.option(
+    "--override", is_flag=True, default=False, help="Force the joint-pain safety override."
+)
+@click.option(
+    "--tomorrow-session-type",
+    default=None,
+    help="Only used for Recovery/Rest — adds a CNS primer if tomorrow is a Key session.",
+)
+def today(
+    session_type: str,
+    recovery_band: str,
+    hrv_signal: str,
+    soreness_band: str,
+    override: bool,
+    tomorrow_session_type: str | None,
+):
+    """Run the Daily Decision Engine and print a Decision Output + rationale.
+
+    Inputs are passed as flags — no live morning-run pipeline exists yet
+    (Orchestrator only classifies, health_check only scores); this is a
+    smoke test of daily_engine end-to-end, matching the other *-smoke commands.
+    """
+    result = make_decision(
+        session_type=session_type,
+        recovery_band=RecoveryBand(recovery_band),
+        hrv_signal=HRVDeltaBand(hrv_signal),
+        soreness_band=SorenessBand(soreness_band),
+        override_triggered=override,
+        override_reasons=["--override flag set"] if override else None,
+        tomorrow_session_type=tomorrow_session_type,
+    )
+
+    click.echo(f"Recommendation: {result['recommendation']}")
+    click.echo(f"Rationale: {result['rationale'] or '(none)'}")
+    if result["check_recovery_week_trigger"]:
+        click.echo("[Flag: check_recovery_week_trigger]")
 
 
 if __name__ == "__main__":

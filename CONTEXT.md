@@ -11,7 +11,7 @@ The classification of WHOOP's raw recovery score into `RECOVERY_GREEN` (67–100
 _Avoid_: recovery score, recovery level, recovery status
 
 **HRV Delta**:
-Today's HRV minus the rolling 30-day average, classified into `HRV_POSITIVE` (>+5ms), `HRV_NEUTRAL` (±5ms), `HRV_NEGATIVE` (-5 to -10ms), or `HRV_STRONG_NEG` (<-10ms). Contextualises a single HRV reading against the athlete's own baseline; it adjusts but never overrides the Recovery Band on its own.
+Today's HRV minus the rolling 30-day average, classified into `HRV_POSITIVE` (>+5ms), `HRV_NEUTRAL` (±5ms), `HRV_NEGATIVE` (-5 to -10ms), or `HRV_STRONG_NEG` (<-10ms). Contextualises a single HRV reading against the athlete's own baseline; it adjusts but never overrides the Recovery Band on its own. On a `RECOVERY_GREEN` day this "never overrides" reaches zero effect, not just a dampened one — the Daily Decision Engine's Key Session tree ignores HRV Delta entirely when Recovery Band is green, regardless of value.
 _Avoid_: HRV trend, HRV signal, HRV score
 
 **Soreness Band**:
