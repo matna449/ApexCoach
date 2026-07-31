@@ -17,10 +17,17 @@ from apex_coach.adapters.whoop_adapter import (
 )
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
+from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import make_decision
 from apex_coach.orchestrator.orchestrator import HRVDeltaBand, RecoveryBand, SorenessBand
+from apex_coach.services.health_check import (
+    FIXED_QUESTIONS,
+    evaluate_health_check,
+    get_adaptive_questions,
+    persist_health_check,
+)
 from apex_coach.services.zone_calculator import calculate_zones
 
 ZONE_LABELS = {
@@ -30,6 +37,8 @@ ZONE_LABELS = {
     "zone4": "Zone 4 (Threshold)",
     "zone5": "Zone 5 (VO2max)",
 }
+
+SESSION_TYPES = ["HIIT", "Threshold", "Zone2_Long", "Zone2_Short", "Strength", "Recovery", "Rest"]
 
 
 @click.group()
@@ -201,13 +210,56 @@ def strava_smoke(since_ts: int, real: bool):
         click.echo(f"  Elevation gain: {activity.total_elevation_gain} m")
 
 
+@cli.command(name="morning-check")
+@click.option(
+    "--session-type",
+    required=True,
+    type=click.Choice(SESSION_TYPES),
+    help="Today's planned session type — selects the adaptive question set.",
+)
+@click.option(
+    "--date",
+    default=None,
+    help="ISO 8601 date this check applies to (defaults to today, UTC).",
+)
+def morning_check(session_type: str, date: str | None):
+    """Interactive morning health check: ask the 3 fixed questions plus the
+    session type's adaptive questions, score the answers, and persist them
+    to daily_metrics (API Contract / docs/adr/0012)."""
+    if date is None:
+        date = datetime.now(timezone.utc).date().isoformat()
+
+    fixed_answers = {}
+    for key, text in FIXED_QUESTIONS:
+        fixed_answers[key] = click.prompt(text, type=click.IntRange(1, 5))
+
+    adaptive_answers = {}
+    for question in get_adaptive_questions(session_type):
+        adaptive_answers[question.key] = click.prompt(question.text, type=click.IntRange(1, 5))
+
+    result = evaluate_health_check(session_type, fixed_answers, adaptive_answers)
+
+    if result["override_triggered"]:
+        click.echo("Override triggered:")
+        for reason in result["override_reasons"]:
+            click.echo(f"  - {reason}")
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    repo = MetricsRepository(engine)
+    persist_health_check(repo, date, result)
+
+    if result["override_triggered"]:
+        click.echo(f"Health check for {date} saved — override noted above.")
+    else:
+        click.echo(f"Health check for {date} saved.")
+
+
 @cli.command()
 @click.option(
     "--session-type",
     required=True,
-    type=click.Choice(
-        ["HIIT", "Threshold", "Zone2_Long", "Zone2_Short", "Strength", "Recovery", "Rest"]
-    ),
+    type=click.Choice(SESSION_TYPES),
 )
 @click.option(
     "--recovery-band", required=True, type=click.Choice([b.value for b in RecoveryBand])
