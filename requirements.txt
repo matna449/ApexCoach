@@ -13,3 +13,7 @@ python-dotenv>=1.0
 pydantic>=2.0
 pandas>=2.0
 numpy>=1.26
+
+# web/backend (F16.1) — FastAPI façade over the existing engines/repositories
+fastapi>=0.115
+uvicorn[standard]>=0.30

@@ -48,6 +48,10 @@ See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model
 5. `apex_coach connect-strava` — one-time OAuth handshake (see `docs/adr/0019`).
 6. `apex_coach strava-smoke --real` — verify the connection.
 
+A minimal local-only web UI (FastAPI façade + React) is scaffolded in
+[`web/`](./web/README.md) — see that README for how to run it alongside the
+CLI/DB above. It's additive: the CLI keeps working exactly as documented here.
+
 ## Working with this repo
 
 This repo also carries the design-decision infrastructure for stress-testing plans against the docs above:
