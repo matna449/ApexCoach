@@ -24,7 +24,9 @@ from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
-from apex_coach.engines.daily_engine import make_decision
+from apex_coach.engines.daily_engine import KEY_SESSION_TYPES, make_decision
+from apex_coach.engines.monthly_engine import calculate_weekly_target, load_au_for_activity
+from apex_coach.engines.weekly_engine import run_weekly_adaptation
 from apex_coach.orchestrator.orchestrator import (
     HRVDeltaBand,
     RecoveryBand,
@@ -1004,6 +1006,140 @@ def _run_followup_loop(ollama_adapter, decision_context: dict, prior_explanation
         if followup_result.explanation:
             click.echo(followup_result.explanation)
             prior_explanation = followup_result.explanation
+
+
+@cli.command(name="weekly-summary")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday of the week to summarize.",
+)
+@click.option(
+    "--today",
+    default=None,
+    help=(
+        "ISO 8601 date to treat as 'today' for day-passed / end-of-week checks "
+        "(defaults to the actual current date, UTC)."
+    ),
+)
+def weekly_summary(week_start: str, today: str | None):
+    """Run weekly_engine.run_weekly_adaptation() against a real week's
+    accumulated decisions/activities/session_scores, persist week_status/
+    adapted_plan_json/load_actual (and a derived load_target, if a monthly
+    target exists) back to weekly_plans, and print a human-readable summary.
+
+    A missed KEY session (HIIT/Threshold) is auto-detected — a plan day
+    whose date has passed with no activity synced for it, and not already
+    recorded in skipped_sessions — and fed into the engine's single-skip-
+    per-run reschedule/write-off logic. Only the chronologically-earliest
+    newly-missed KEY session is handled per run; running this again after
+    another day passes picks up the next one.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+    metrics_repo = MetricsRepository(engine)
+
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None:
+        raise click.ClickException(
+            f"no weekly_plans row for week_start_date {week_start!r} — run `plan-week` first."
+        )
+
+    week_start_date = _date.fromisoformat(week_start)
+    week_end_date = week_start_date + timedelta(days=6)
+    today_date = _date.fromisoformat(today)
+
+    # Read the week's decisions — one per day, used below to surface
+    # explicit ABORTs in the summary.
+    decisions_by_day = {}
+    for i, day_name in enumerate(WEEKDAYS):
+        day_date = (week_start_date + timedelta(days=i)).isoformat()
+        decision = plan_repo.get_decision(day_date)
+        if decision is not None:
+            decisions_by_day[day_name] = decision
+
+    # Read the week's activities + their session scores.
+    week_activities = metrics_repo.get_activities_range(week_start, week_end_date.isoformat())
+    load_actual = sum(load_au_for_activity(a) for a in week_activities)
+    activities_by_date: dict[str, list] = {}
+    for activity in week_activities:
+        activities_by_date.setdefault(activity["date"], []).append(activity)
+
+    session_scores = []
+    for activity in week_activities:
+        score = metrics_repo.get_session_score(activity["id"])
+        if score is not None:
+            session_scores.append(score)
+
+    # Auto-detect the earliest newly-missed KEY session.
+    effective_sessions = json.loads(week["adapted_plan_json"] or week["planned_sessions_json"] or "[]")
+    already_skipped_days = {s["original_day"] for s in json.loads(week["skipped_sessions"] or "[]")}
+
+    key_session_skipped_type = None
+    key_session_skipped_day = None
+    for session in effective_sessions:
+        if session["session_type"] not in KEY_SESSION_TYPES:
+            continue
+        if session["day"] in already_skipped_days:
+            continue
+        session_date = (week_start_date + timedelta(days=WEEKDAYS.index(session["day"]))).isoformat()
+        if session_date >= today:
+            continue
+        if session_date in activities_by_date:
+            continue
+        key_session_skipped_type = session["session_type"]
+        key_session_skipped_day = session["day"]
+        break
+
+    result = run_weekly_adaptation(
+        plan_repo,
+        metrics_repo,
+        week_start,
+        today=today,
+        key_session_skipped_type=key_session_skipped_type,
+        key_session_skipped_day=key_session_skipped_day,
+        end_of_week_reached=today_date > week_end_date,
+    )
+
+    update_fields = {"load_actual": load_actual}
+    month = plan_repo.get_monthly_target(week_start_date.replace(day=1).isoformat())
+    if month and month.get("load_target_total"):
+        update_fields["load_target"] = calculate_weekly_target(month["load_target_total"])
+    plan_repo.update_weekly_plan(week_start, **update_fields)
+    load_target = update_fields.get("load_target", week["load_target"])
+
+    click.echo(f"Week starting {week_start}: {result['week_status']}")
+    if load_target:
+        click.echo(f"Load actual: {load_actual:.1f} AU / target {load_target:.1f} AU")
+    else:
+        click.echo(f"Load actual: {load_actual:.1f} AU (no monthly target set)")
+
+    if result["diff"]:
+        click.echo("Adapted sessions:")
+        for change in result["diff"]:
+            click.echo(f"  {change['day']}: {change['from']} -> {change['to']}")
+
+    if result["skipped_sessions"]:
+        click.echo("Skipped sessions:")
+        for skip in result["skipped_sessions"]:
+            click.echo(f"  {skip['original_day']} {skip['session_type']} — {skip['disposition']}")
+
+    aborted_days = [day for day, d in decisions_by_day.items() if d["recommendation"] == "ABORT"]
+    if aborted_days:
+        click.echo(f"Daily engine recommended ABORT on: {', '.join(aborted_days)}")
+
+    execution_scores = [
+        s["execution_score"] for s in session_scores if s.get("execution_score") is not None
+    ]
+    if execution_scores:
+        avg = sum(execution_scores) / len(execution_scores)
+        click.echo(
+            f"Average execution score this week: {avg:.1f} ({len(execution_scores)} scored session(s))"
+        )
 
 
 if __name__ == "__main__":

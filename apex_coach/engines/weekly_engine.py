@@ -210,6 +210,11 @@ def run_weekly_adaptation(
     if week is None:
         raise ValueError(f"no weekly_plans row for week_start_date {week_start_date!r}")
 
+    # week_status is NULL on a freshly plan-week'd row (no evaluation has
+    # run yet) — ON_TRACK is §4.1's documented starting state ("all
+    # sessions on plan"), not an accidental default.
+    current_week_status = week["week_status"] or "ON_TRACK"
+
     planned_sessions = json.loads(week["planned_sessions_json"] or "[]")
     stored_adapted = json.loads(week["adapted_plan_json"] or "null")
     adapted_sessions = stored_adapted if stored_adapted is not None else [
@@ -223,8 +228,11 @@ def run_weekly_adaptation(
 
     month_start = week_start.replace(day=1).isoformat()
     month = plan_repo.get_monthly_target(month_start)
+    # load_actual_total is legitimately None until run_monthly_review() (F11.10)
+    # has run at least once this block — treat "no accumulated monthly load
+    # recorded yet" as 0%, not a crash.
     monthly_load_pct = (
-        (month["load_actual_total"] / month["load_target_total"] * 100)
+        ((month.get("load_actual_total") or 0.0) / month["load_target_total"] * 100)
         if month and month.get("load_target_total")
         else 0.0
     )
@@ -245,12 +253,12 @@ def run_weekly_adaptation(
             key_session_skipped_day,
             days_remaining,
             monthly_load_pct,
-            week["week_status"],
+            current_week_status,
         )
         skipped_sessions = [*skipped_sessions, skip_record]
 
     new_state = decide_state_transition(
-        week["week_status"],
+        current_week_status,
         end_of_week_reached=end_of_week_reached,
         key_session_skipped=key_session_skipped_type is not None,
         load_pct=monthly_load_pct,
@@ -261,7 +269,7 @@ def run_weekly_adaptation(
         monthly_load_not_recoverable=monthly_load_not_recoverable,
     )
 
-    if new_state == "RECOVERY_WEEK" and week["week_status"] != "RECOVERY_WEEK":
+    if new_state == "RECOVERY_WEEK" and current_week_status != "RECOVERY_WEEK":
         adapted_sessions = apply_recovery_week_protocol(adapted_sessions)
 
     diff = _diff_sessions(planned_sessions, adapted_sessions)
