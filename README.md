@@ -25,7 +25,7 @@ Each document's own "Document Control" section names the next document in the ch
 - **Daily engine** — WHOOP recovery + HRV delta + soreness + morning health check → `GO / MODIFY / MODALITY_SWAP / ABORT`.
 - **Weekly engine** — reschedules or writes off skipped key sessions against the monthly load target.
 - **Monthly engine** — accumulates load, forecasts performance, flags target risk.
-- **Explanation layer** — local Ollama (LLaMA 3.1 8B) turns structured decision JSON into natural language. It explains; it never decides.
+- **Explanation layer** — local Ollama (gemma4:latest, docs/adr/0022) turns structured decision JSON into natural language. It explains; it never decides.
 - **Persistence** — SQLite in v1.0, schema written to be PostgreSQL-compatible for a clean v2.0 promotion to Azure.
 
 See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model and the [SDD](./docs/ApexCoach_SDD_v1.0.md) §1.2 for the system context diagram.

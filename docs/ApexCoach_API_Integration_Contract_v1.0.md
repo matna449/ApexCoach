@@ -484,10 +484,10 @@ Ollama runs as a background service on localhost:11434. No authentication requir
 |----|----|
 | **Service** | Ollama (local background process — ollama serve) |
 | **Base URL** | http://localhost:11434 |
-| **Model** | llama3.1:8b (pull with: ollama pull llama3.1:8b) |
-| **Context window** | 128k tokens. Full structured input comfortably fits. |
+| **Model** | gemma4:latest (pull with: ollama pull gemma4:latest — see docs/adr/0022) |
+| **Context window** | See `ollama show gemma4:latest` for the exact figure. The structured Decision Context is small (a few KB of JSON) and comfortably fits regardless. |
 | **Adapter Method** | ollama_adapter.explain(decision_context: dict) -\> ExplanationResult (see docs/adr/0010); ollama_adapter.ask_followup(decision_context: dict, prior_explanation: str, question: str) -\> ExplanationResult for conversational follow-up (see docs/adr/0020) |
-| **Hardware fit** | ~6 GB VRAM for 8B model. 24 GB M4 Pro has ample headroom. |
+| **Hardware fit** | ~9.6 GB on disk. 24 GB M4 Pro has ample headroom. |
 
 ### 4.2 Endpoint: POST /api/chat
 
@@ -496,7 +496,7 @@ POST http://localhost:11434/api/chat
 Content-Type: application/json
 
 {
-  "model":  "llama3.1:8b",
+  "model":  "gemma4:latest",
   "stream": false,
   "options": {
     "temperature": 0.3,   <- Low. Consistent, factual explanations.
@@ -635,8 +635,8 @@ Ollama is a local process. Failures are typically startup-related. A decision is
 | **Code / Condition** | **Meaning** | **System Action** | **Severity** |
 |----|----|----|:--:|
 | **Connection refused** | Ollama not running | Output structured decision JSON directly without explanation. Print: \[Ollama offline -- start with: ollama serve\] | **WARN** |
-| **Model not found** | Model not pulled | Print: \[Run: ollama pull llama3.1:8b to enable explanations\]. Output raw decision to CLI. | **WARN** |
-| **Timeout \> 30s** | Model overloaded | Abandon request. Output raw decision. Log timeout. M4 Pro should not timeout on 8B model -- investigate if this recurs. | **WARN** |
+| **Model not found** | Model not pulled | Print: \[Run: ollama pull gemma4:latest to enable explanations\]. Output raw decision to CLI. | **WARN** |
+| **Timeout \> 30s** | Model overloaded | Abandon request. Output raw decision. Log timeout. M4 Pro should not timeout on this model -- investigate if this recurs. | **WARN** |
 | **Malformed output** | Model ignored format | Wrap Ollama call in try/except. If explanation parsing fails, output raw model text as-is rather than crashing. | **INFO** |
 
 > **DESIGN RULE — GRACEFUL DEGRADATION**
