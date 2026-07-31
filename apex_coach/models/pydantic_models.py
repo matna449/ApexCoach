@@ -72,7 +72,7 @@ class WhoopSleepScore(BaseModel):
 
 
 class WhoopSleep(BaseModel):
-    id: int
+    id: str
     created_at: datetime
     score_state: ScoreState
     score: WhoopSleepScore | None = None

@@ -7,10 +7,10 @@
 |  |  |
 |----|----|
 | **Document Type** | API Integration Contract |
-| **Version** | 1.0 — Initial Draft |
+| **Version** | 1.1 — WHOOP v2 correction |
 | **Companion Docs** | ApexCoach_PRD_v1.0 · ApexCoach_SDD_v1.0 |
 | **Author** | Mattias (Primary User / Developer) |
-| **APIs Covered** | WHOOP Developer API v1 · Strava API v3 · Ollama REST API |
+| **APIs Covered** | WHOOP Developer API v2 · Strava API v3 · Ollama REST API |
 | **Auth Method** | OAuth 2.0 Authorization Code + PKCE (WHOOP & Strava) · No auth (Ollama local) |
 | **Date** | June 2026 |
 
@@ -20,7 +20,7 @@ Apex Coach integrates three external interfaces. Each is accessed exclusively th
 
 | **API** | **Auth Type** | **Base URL** | **Rate Limit** | **Adapter Module** |
 |----|----|----|----|----|
-| WHOOP v1 | OAuth 2.0 + PKCE | api.prod.whoop.com/developer/v1 | 100 req/min | adapters/whoop_adapter.py |
+| WHOOP v2 | OAuth 2.0 + PKCE | api.prod.whoop.com | 100 req/min | adapters/whoop_adapter.py |
 | Strava v3 | OAuth 2.0 + PKCE | www.strava.com/api/v3 | 100 req/15min | adapters/strava_adapter.py |
 | Ollama | None (local) | localhost:11434 | Unlimited | adapters/ollama_adapter.py |
 
@@ -32,25 +32,25 @@ Apex Coach integrates three external interfaces. Each is accessed exclusively th
 
 ### 2.1 OAuth 2.0 Authorization Flow
 
-WHOOP uses OAuth 2.0 Authorization Code flow with PKCE. This is a one-time browser handshake. Subsequent runs use the stored refresh token to obtain new access tokens automatically.
+WHOOP uses OAuth 2.0 Authorization Code flow with PKCE. This is a one-time browser handshake. WHOOP does not accept http://localhost redirect URIs, so the redirect_uri points at a hosted callback landing page; after approving in the browser, the athlete copies the code and state it displays and pastes them into the CLI to complete the exchange. Subsequent runs use the stored refresh token to obtain new access tokens automatically.
 
 ```
 STEP 1 — DEVELOPER SETUP (one time, manual)
   Register app at: developer.whoop.com
   Obtain: WHOOP_CLIENT_ID, WHOOP_CLIENT_SECRET
-  Set redirect URI: http://localhost:8080/callback
+  Set redirect URI: https://matna449.github.io/ApexCoach/callback.html  <- WHOOP rejects http://localhost redirects
 
 STEP 2 — AUTHORIZATION URL (one time, opens browser)
   GET https://api.prod.whoop.com/oauth/oauth2/auth
     ?response_type=code
     &client_id={WHOOP_CLIENT_ID}
-    &redirect_uri=http://localhost:8080/callback
-    &scope=read:recovery read:sleep read:strain read:body_measurement
+    &redirect_uri=https://matna449.github.io/ApexCoach/callback.html
+    &scope=read:recovery read:cycles read:sleep offline
     &state={random_state_token}           <- CSRF protection
     &code_challenge={pkce_challenge}       <- SHA-256 of code_verifier
     &code_challenge_method=S256
 
-STEP 3 — TOKEN EXCHANGE (after browser redirect)
+STEP 3 — TOKEN EXCHANGE (after athlete pastes the code+state from the callback page into the CLI)
   POST https://api.prod.whoop.com/oauth/oauth2/token
   Content-Type: application/x-www-form-urlencoded
   Body:
@@ -58,7 +58,7 @@ STEP 3 — TOKEN EXCHANGE (after browser redirect)
     code={authorization_code}
     client_id={WHOOP_CLIENT_ID}
     client_secret={WHOOP_CLIENT_SECRET}
-    redirect_uri=http://localhost:8080/callback
+    redirect_uri=https://matna449.github.io/ApexCoach/callback.html
     code_verifier={pkce_verifier}
 
 STEP 4 — TOKEN RESPONSE
@@ -82,25 +82,25 @@ STEP 5 — TOKEN REFRESH (automatic, every run)
 >
 > Tokens are stored in the SQLite database (table: oauth_tokens), encrypted at rest using Fernet symmetric encryption. The encryption key is derived via PBKDF2HMAC from a dedicated APEX_ENCRYPTION_KEY (see SDD §6.3), not from either provider's OAuth client secret — see docs/adr/0005. Never store raw tokens in .env or plaintext files.
 
-### 2.2 Endpoint: GET /v1/recovery
+### 2.2 Endpoint: GET /developer/v2/recovery
 
 Fetches the most recent recovery record. Called once per morning run. Returns recovery score, HRV, RHR, and sleep performance for the latest completed sleep cycle.
 
 |  |  |
 |----|----|
-| **Endpoint** | GET /v1/recovery |
+| **Endpoint** | GET /developer/v2/recovery |
 | **Auth Header** | Authorization: Bearer {access_token} |
 | **Query Params** | limit=1 (fetch latest only) |
 | **Adapter Method** | whoop_adapter.get_latest_recovery() -\> WhoopRecovery — internal only, see §2.5 / docs/adr/0011 |
 
-#### Mock Payload — GET /v1/recovery
+#### Mock Payload — GET /developer/v2/recovery
 
 ```
 {
   "records": [
     {
       "cycle_id":         98234871,
-      "sleep_id":         112847293,
+      "sleep_id":         "123e4567-e89b-12d3-a456-426614174000",
       "user_id":          18473621,
       "created_at":       "2026-06-23T06:14:22.000Z",
       "updated_at":       "2026-06-23T06:14:22.000Z",
@@ -142,18 +142,18 @@ class WhoopRecovery(BaseModel):
         return v
 ```
 
-### 2.3 Endpoint: GET /v1/cycle
+### 2.3 Endpoint: GET /developer/v2/cycle
 
 Fetches the current day's strain cycle. Called after each session to capture accumulated strain. Also provides the day's overall strain context for the weekly engine.
 
 |  |  |
 |----|----|
-| **Endpoint** | GET /v1/cycle |
+| **Endpoint** | GET /developer/v2/cycle |
 | **Auth Header** | Authorization: Bearer {access_token} |
 | **Query Params** | limit=1 |
 | **Adapter Method** | whoop_adapter.get_latest_cycle() -\> WhoopCycle — internal only, see §2.5 / docs/adr/0011 |
 
-#### Mock Payload — GET /v1/cycle
+#### Mock Payload — GET /developer/v2/cycle
 
 ```
 {
@@ -199,17 +199,17 @@ class WhoopCycle(BaseModel):
         return v
 ```
 
-### 2.4 Endpoint: GET /v1/activity/sleep
+### 2.4 Endpoint: GET /developer/v2/activity/sleep
 
 Fetches the latest sleep record for sleep stage breakdown and total sleep hours. Used as a supplementary input to the daily engine and stored in daily_metrics.
 
-#### Mock Payload — GET /v1/activity/sleep
+#### Mock Payload — GET /developer/v2/activity/sleep
 
 ```
 {
   "records": [
     {
-      "id":           84729301,
+      "id":           "3d0590ff-3739-4d9f-b14f-e7525a169699",
       "created_at":   "2026-06-23T06:14:00.000Z",
       "start":        "2026-06-22T22:18:00.000Z",
       "end":          "2026-06-23T06:08:00.000Z",
@@ -253,7 +253,7 @@ class WhoopSleepScore(BaseModel):
         return asleep_milli / 1000 / 60 / 60
 
 class WhoopSleep(BaseModel):
-    id:          int
+    id:          str
     created_at:  datetime
     score_state: Literal['SCORED', 'PENDING_SCORE', 'UNSCORABLE']
     score:       WhoopSleepScore | None = None
@@ -673,5 +673,6 @@ Apex Coach is a low-frequency application. A single morning run makes at most 4 
 | **Version** | **Date** | **Changes** | **Author** |
 |----|----|----|----|
 | 1.0 | June 2026 | Initial draft. WHOOP, Strava, and Ollama contracts fully specified with mock payloads, Pydantic models, failure modes, and rate limit strategy. | Mattias |
+| 1.1 | 31 July 2026 | Corrected against WHOOP's real, live-verified API: v1 endpoints retired, replaced with /developer/v2/recovery, /developer/v2/cycle, /developer/v2/activity/sleep; OAuth scope corrected to read:recovery read:cycles read:sleep offline (read:strain is not a real scope; offline is required for refresh tokens); redirect_uri changed from http://localhost:8080/callback (rejected by WHOOP) to a hosted GitHub Pages callback page with a paste-the-code-back flow; WhoopSleep.id corrected from int to str (WHOOP v2 uses a UUID string for sleep record ids). See docs/adr/0018, GitHub issues \#32/#34/#35. | Mattias + Claude |
 
 *Next document: Logic & Algorithm Specification — decision tree matrix, weekly adaptation state machine, session scoring detail, and monthly load forecasting.*
