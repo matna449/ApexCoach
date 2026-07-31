@@ -19,6 +19,9 @@ class Settings:
     whoop_client_id: str | None = None
     whoop_client_secret: str | None = None
     whoop_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
+    strava_client_id: str | None = None
+    strava_client_secret: str | None = None
+    strava_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
 
 
 def get_settings() -> Settings:
@@ -29,5 +32,10 @@ def get_settings() -> Settings:
         whoop_client_secret=os.getenv("WHOOP_CLIENT_SECRET"),
         whoop_redirect_uri=os.getenv(
             "WHOOP_REDIRECT_URI", "https://matna449.github.io/ApexCoach/callback.html"
+        ),
+        strava_client_id=os.getenv("STRAVA_CLIENT_ID"),
+        strava_client_secret=os.getenv("STRAVA_CLIENT_SECRET"),
+        strava_redirect_uri=os.getenv(
+            "STRAVA_REDIRECT_URI", "https://matna449.github.io/ApexCoach/callback.html"
         ),
     )
