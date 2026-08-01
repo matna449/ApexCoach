@@ -20,7 +20,7 @@ ACTIVITIES_URL = (
 )
 
 
-def _record(activity_id: int, activity_type: str = "Run", start: str = "2026-07-30T06:00:00") -> dict:
+def _record(activity_id: int | str, activity_type: str = "Run", start: str = "2026-07-30T06:00:00") -> dict:
     return {
         "id": activity_id,
         "name": f"Run {activity_id}",
@@ -65,6 +65,18 @@ def test_get_new_activities_maps_records_to_typed_activities(httpx_mock, sleeps)
     assert [a.id for a in activities] == [1, 2]
     assert activities[0].type == "Run"
     assert activities[0].has_heartrate is True
+
+
+def test_get_new_activities_accepts_prefixed_string_ids(httpx_mock, sleeps):
+    """Real intervals.icu ids are strings like "i171360215", not plain
+    integers — caught during F18.5/#94's live run against a real account."""
+    _, sleep_fn = sleeps
+    httpx_mock.add_response(url=ACTIVITIES_URL, json=[_record("i171360215")])
+
+    adapter = _adapter(sleep_fn)
+    activities = adapter.get_new_activities(0)
+
+    assert activities[0].id == "i171360215"
 
 
 def test_get_new_activities_applies_activity_type_mapping(httpx_mock, sleeps):

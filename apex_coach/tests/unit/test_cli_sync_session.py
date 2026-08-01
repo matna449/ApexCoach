@@ -648,4 +648,4 @@ def test_sync_session_mock_dispatches_to_intervals_icu_when_configured(tmp_path)
     engine = create_engine(str(tmp_path / "test.db"))
     with engine.begin() as conn:
         rows = conn.execute(sa.text("SELECT strava_id FROM activities")).mappings().all()
-    assert rows[0]["strava_id"] == "987654321"
+    assert rows[0]["strava_id"] == "i987654321"

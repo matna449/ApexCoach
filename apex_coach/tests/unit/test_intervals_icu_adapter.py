@@ -25,6 +25,17 @@ def test_get_new_activities_returns_typed_activities_matching_mock_data():
     assert activity.has_heartrate is True
 
 
+def test_activity_id_is_a_prefixed_string_not_an_int():
+    """intervals.icu ids are strings like "i171360215", confirmed against a
+    real account (F18.5/#94) — Activity.id must accept str, not just int."""
+    adapter = MockIntervalsIcuAdapter()
+
+    activity = adapter.get_new_activities(since_ts=0)[0]
+
+    assert activity.id == MOCK_ACTIVITY_RECORD["id"]
+    assert isinstance(activity.id, str)
+
+
 def test_pace_sec_per_km_computed_from_average_speed():
     adapter = MockIntervalsIcuAdapter()
 

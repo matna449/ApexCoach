@@ -123,7 +123,9 @@ class StravaSplit(BaseModel):
 
 
 class Activity(BaseModel):
-    id: int
+    # int for Strava's numeric ids; str for intervals.icu's prefixed ids
+    # (e.g. "i171360215", confirmed against a real account — F18.5/#94).
+    id: int | str
     name: str
     type: str
     start_date: datetime
