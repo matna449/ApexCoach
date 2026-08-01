@@ -122,7 +122,7 @@ class StravaSplit(BaseModel):
     average_grade_adjusted_speed: float | None = None
 
 
-class StravaActivity(BaseModel):
+class Activity(BaseModel):
     id: int
     name: str
     type: str
@@ -149,14 +149,14 @@ class StravaActivity(BaseModel):
         return 0.0
 
 
-class StravaStreamSeries(BaseModel):
+class ActivityStreamSeries(BaseModel):
     data: list[float]
     series_type: str
     original_size: int
     resolution: str | None = None
 
 
-class StravaStream(BaseModel):
-    heartrate: StravaStreamSeries
-    time: StravaStreamSeries
-    distance: StravaStreamSeries
+class ActivityStream(BaseModel):
+    heartrate: ActivityStreamSeries
+    time: ActivityStreamSeries
+    distance: ActivityStreamSeries

@@ -21,7 +21,7 @@ from apex_coach.adapters.errors import (
     AdapterUnavailableError,
 )
 from apex_coach.adapters.oauth_pkce import generate_state
-from apex_coach.models.pydantic_models import StravaActivity, StravaStream
+from apex_coach.models.pydantic_models import Activity, ActivityStream
 
 STRAVA_BASE_URL = "https://www.strava.com/api/v3"
 STRAVA_AUTH_URL = "https://www.strava.com/oauth/authorize"
@@ -111,9 +111,9 @@ MOCK_STREAM_PAYLOAD = {
 }
 
 
-class StravaAdapterProtocol(Protocol):
-    def get_new_activities(self, since_ts: int) -> list[StravaActivity]: ...
-    def get_activity_stream(self, activity_id: int) -> StravaStream | None: ...
+class ActivitySyncAdapterProtocol(Protocol):
+    def get_new_activities(self, since_ts: int) -> list[Activity]: ...
+    def get_activity_stream(self, activity_id: int) -> ActivityStream | None: ...
 
 
 class MockStravaAdapter:
@@ -122,7 +122,7 @@ class MockStravaAdapter:
     def __init__(self, malformed: bool = False):
         self._malformed = malformed
 
-    def get_new_activities(self, since_ts: int) -> list[StravaActivity]:
+    def get_new_activities(self, since_ts: int) -> list[Activity]:
         try:
             payload = MOCK_ACTIVITY_PAYLOAD
             if self._malformed:
@@ -130,7 +130,7 @@ class MockStravaAdapter:
                 # an API error.
                 payload = {"id": "not-an-int", "name": "bad activity"}
 
-            activity = StravaActivity(**payload)
+            activity = Activity(**payload)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e
 
@@ -140,12 +140,12 @@ class MockStravaAdapter:
             return []
         return [activity]
 
-    def get_activity_stream(self, activity_id: int) -> StravaStream | None:
+    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
         if activity_id != MOCK_ACTIVITY_PAYLOAD["id"]:
             return None
 
         try:
-            return StravaStream(**MOCK_STREAM_PAYLOAD)
+            return ActivityStream(**MOCK_STREAM_PAYLOAD)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e
 
@@ -223,7 +223,7 @@ def run_authorization_flow(
 
 
 class RealStravaAdapter:
-    """Drop-in replacement for MockStravaAdapter behind StravaAdapterProtocol.
+    """Drop-in replacement for MockStravaAdapter behind ActivitySyncAdapterProtocol.
     Refreshes tokens via token_repository, handles §6.2's failure modes."""
 
     def __init__(
@@ -307,11 +307,11 @@ class RealStravaAdapter:
 
         raise StravaRateLimitError("Strava rate limit — retries exhausted")
 
-    def get_new_activities(self, since_ts: int) -> list[StravaActivity]:
+    def get_new_activities(self, since_ts: int) -> list[Activity]:
         # Paginate until a short page signals the end (§7.2: after= already
         # limits us to genuinely new activities, so a short page — not
         # necessarily empty — is the correct stop condition).
-        activities: list[StravaActivity] = []
+        activities: list[Activity] = []
         page = 1
         try:
             while True:
@@ -321,7 +321,7 @@ class RealStravaAdapter:
                 )
                 if not records:
                     break
-                activities.extend(StravaActivity(**r) for r in records)
+                activities.extend(Activity(**r) for r in records)
                 if len(records) < PER_PAGE:
                     break
                 page += 1
@@ -329,7 +329,7 @@ class RealStravaAdapter:
             raise AdapterMalformedResponseError(str(e)) from e
         return activities
 
-    def get_activity_stream(self, activity_id: int) -> StravaStream | None:
+    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
         try:
             payload = self._get(
                 f"/activities/{activity_id}/streams",
@@ -343,6 +343,6 @@ class RealStravaAdapter:
             return None
 
         try:
-            return StravaStream(**payload)
+            return ActivityStream(**payload)
         except ValidationError as e:
             raise AdapterMalformedResponseError(str(e)) from e

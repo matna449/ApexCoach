@@ -4,7 +4,7 @@ Scoring logic is pure — no DB access beyond the explicit
 persist_session_score() call. Runs after a session syncs from Strava.
 Produces execution_score (0-100) and independent overpush/underpush
 flags. Never feeds the daily decision engine — purely retrospective
-(§6.1). See docs/adr/0014 for the StravaStream/get_activity_stream()
+(§6.1). See docs/adr/0014 for the ActivityStream/get_activity_stream()
 addition and null-component renormalization this ticket introduced.
 """
 

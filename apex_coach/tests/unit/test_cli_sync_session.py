@@ -18,7 +18,7 @@ from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import session_scores
-from apex_coach.models.pydantic_models import StravaActivity, StravaStream
+from apex_coach.models.pydantic_models import Activity, ActivityStream
 
 ENCRYPTION_KEY = "test-passphrase-not-for-production"
 
@@ -42,8 +42,8 @@ def _activity(
     distance: float = 3000.0,
     average_heartrate: float | None = 140.0,
     max_heartrate: float | None = 155.0,
-) -> StravaActivity:
-    return StravaActivity(
+) -> Activity:
+    return Activity(
         id=activity_id,
         name=name,
         type=activity_type,
@@ -58,9 +58,9 @@ def _activity(
     )
 
 
-def _stream(hr_data: list[float]) -> StravaStream:
+def _stream(hr_data: list[float]) -> ActivityStream:
     n = len(hr_data)
-    return StravaStream(
+    return ActivityStream(
         heartrate={"data": hr_data, "series_type": "distance", "original_size": n},
         time={"data": list(range(n)), "series_type": "distance", "original_size": n},
         distance={

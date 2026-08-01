@@ -2,7 +2,7 @@ import pytest
 
 from apex_coach.adapters.errors import AdapterMalformedResponseError
 from apex_coach.adapters.strava_adapter import MOCK_ACTIVITY_PAYLOAD, MockStravaAdapter
-from apex_coach.models.pydantic_models import StravaActivity, StravaStream
+from apex_coach.models.pydantic_models import Activity, ActivityStream
 
 
 def test_get_new_activities_returns_typed_activities_matching_mock_data():
@@ -12,7 +12,7 @@ def test_get_new_activities_returns_typed_activities_matching_mock_data():
 
     assert len(activities) == 1
     activity = activities[0]
-    assert isinstance(activity, StravaActivity)
+    assert isinstance(activity, Activity)
     assert activity.name == "Tuesday Threshold - Track Session"
     assert activity.type == "Run"
     assert activity.distance == 9843.2
@@ -80,7 +80,7 @@ def test_get_activity_stream_returns_typed_stream_for_known_activity():
 
     stream = adapter.get_activity_stream(MOCK_ACTIVITY_PAYLOAD["id"])
 
-    assert isinstance(stream, StravaStream)
+    assert isinstance(stream, ActivityStream)
     assert len(stream.heartrate.data) == MOCK_ACTIVITY_PAYLOAD["elapsed_time"]
     assert len(stream.heartrate.data) == len(stream.time.data) == len(stream.distance.data)
 
