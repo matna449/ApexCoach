@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import ExecutionScoreTrendChart from './ExecutionScoreTrendChart'
+import LoadActualVsTargetChart from './LoadActualVsTargetChart'
+import HrvTrendChart from './HrvTrendChart'
 
 // F16.1 scaffolding: prove the FastAPI <-> React round trip works, nothing
 // more. Fetches the backend directly (backend CORS in web/backend/main.py
@@ -39,6 +41,8 @@ function App() {
         <pre data-testid="health-response">{JSON.stringify(health, null, 2)}</pre>
       )}
       <ExecutionScoreTrendChart />
+      <LoadActualVsTargetChart />
+      <HrvTrendChart />
     </main>
   )
 }
