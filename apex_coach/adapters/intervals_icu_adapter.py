@@ -62,6 +62,11 @@ class IntervalsIcuRateLimitError(AdapterUnavailableError):
     """429, retries exhausted."""
 
 
+class IntervalsIcuEventNotFoundError(AdapterUnavailableError):
+    """404 on a PUT — the eventId being updated no longer exists on
+    intervals.icu's side (e.g. deleted by the athlete)."""
+
+
 class IntervalsIcuUnmappedActivityTypeError(AdapterMalformedResponseError):
     """intervals.icu returned a sport type with no canonical vocabulary
     mapping (docs/adr/0025 §5) — surfaced loudly rather than guessed at,
@@ -103,6 +108,29 @@ def _record_to_activity(record: dict) -> Activity:
         "has_heartrate": record.get("average_heartrate") is not None,
     }
     return Activity(**payload)
+
+
+def _describe_structure(session_type: str, structure: dict) -> str:
+    """Human-readable summary of a structure_generator.py structure dict for
+    the event's description field. ADR-0027 §4.2's native workout-text
+    syntax (which intervals.icu parses into a watch-executable structure)
+    is one of the ADR's explicit unknowns — this is plain-text only for v1;
+    upgrading to native syntax is a follow-up once that syntax is confirmed."""
+    if structure["type"] == "intervals":
+        return (
+            f"{session_type}: {structure['rep_count']}x "
+            f"({structure['work_min']:.0f}min @ {structure['work_zone']} / "
+            f"{structure['recovery_min']:.0f}min @ {structure['recovery_zone']}) "
+            f"+ {structure['warmup_cooldown_min']:.0f}min warmup/cooldown"
+        )
+    if structure["type"] == "single_block" and "main_set_min" in structure:
+        return (
+            f"{session_type}: {structure['main_set_min']:.0f}min @ {structure['zone']} "
+            f"+ {structure['warmup_cooldown_min']:.0f}min warmup/cooldown"
+        )
+    if structure["type"] == "single_block":
+        return f"{session_type}: {structure['duration_min']:.0f}min"
+    return f"{session_type}: rest day"
 
 
 def _streams_to_activity_stream(records: list[dict]) -> ActivityStream:
@@ -207,10 +235,17 @@ class RealIntervalsIcuAdapter:
             base_url=INTERVALS_ICU_BASE_URL, auth=("API_KEY", api_key)
         )
 
-    def _get(self, path: str, params: dict | None = None):
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        json: dict | None = None,
+        not_found_error: type[AdapterUnavailableError] = IntervalsIcuActivityNotFoundError,
+    ):
         for attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
-                response = self._client.get(path, params=params)
+                response = self._client.request(method, path, params=params, json=json)
             except httpx.TimeoutException as e:
                 raise AdapterTimeoutError(f"intervals.icu request timed out: {path}") from e
             except httpx.ConnectError as e:
@@ -219,7 +254,7 @@ class RealIntervalsIcuAdapter:
             if response.status_code == 401:
                 raise IntervalsIcuAuthError("401 from intervals.icu — invalid API key")
             if response.status_code == 404:
-                raise IntervalsIcuActivityNotFoundError(f"404 from intervals.icu: {path}")
+                raise not_found_error(f"404 from intervals.icu: {path}")
             if response.status_code == 429:
                 if attempt < RATE_LIMIT_MAX_RETRIES:
                     retry_after = response.headers.get("Retry-After")
@@ -232,6 +267,17 @@ class RealIntervalsIcuAdapter:
             return response.json()
 
         raise IntervalsIcuRateLimitError("intervals.icu rate limit — retries exhausted")
+
+    def _get(self, path: str, params: dict | None = None):
+        return self._request("GET", path, params=params)
+
+    def _post(self, path: str, json: dict | None = None):
+        return self._request("POST", path, json=json)
+
+    def _put(self, path: str, json: dict | None = None):
+        return self._request(
+            "PUT", path, json=json, not_found_error=IntervalsIcuEventNotFoundError
+        )
 
     def get_new_activities(self, since_ts: int) -> list[Activity]:
         oldest = datetime.fromtimestamp(since_ts, tz=timezone.utc).strftime("%Y-%m-%d")
@@ -263,3 +309,24 @@ class RealIntervalsIcuAdapter:
             return _streams_to_activity_stream(records)
         except (ValidationError, KeyError) as e:
             raise AdapterMalformedResponseError(str(e)) from e
+
+    def push_session(
+        self, event_date: str, structured_session: dict, existing_event_id: str | None
+    ) -> str:
+        """PlanExportAdapterProtocol implementation — POST to create, PUT to
+        update in place (docs/adr/0027 §3). The response's eventId field
+        name is one of the ADR's explicit unknowns; `id` is REST convention
+        and this repo's assumption until confirmed by a live push."""
+        payload = {
+            "start_date_local": f"{event_date}T00:00:00",
+            "category": "WORKOUT",
+            "name": f"ApexCoach: {structured_session['session_type']}",
+            "description": _describe_structure(
+                structured_session["session_type"], structured_session["structure"]
+            ),
+        }
+        if existing_event_id is None:
+            response = self._post("/athlete/0/events", json=payload)
+        else:
+            response = self._put(f"/athlete/0/events/{existing_event_id}", json=payload)
+        return str(response["id"])

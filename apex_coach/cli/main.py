@@ -12,6 +12,7 @@ from apex_coach.adapters.intervals_icu_adapter import (
     MockIntervalsIcuAdapter,
     RealIntervalsIcuAdapter,
 )
+from apex_coach.adapters.plan_export_adapter import MockPlanExportAdapter
 from apex_coach.adapters.strava_adapter import (
     MockStravaAdapter,
     RealStravaAdapter,
@@ -451,6 +452,29 @@ def _build_activity_sync_adapter(engine, settings, profile: dict | None, real: b
     return RealIntervalsIcuAdapter(token["access_token"])
 
 
+def _build_plan_export_adapter(engine, settings, profile: dict | None, real: bool):
+    """Plan export (calendar push) is intervals.icu-only — Strava has no
+    write/calendar equivalent (PlanExportAdapterProtocol, docs/adr/0027).
+    A Strava-configured athlete gets a clear error, not a crash."""
+    provider = (profile or {}).get("activity_sync_provider") or DEFAULT_ACTIVITY_SYNC_PROVIDER
+    if provider != "INTERVALS_ICU":
+        raise click.ClickException(
+            "Pushing a plan to a calendar is only supported for intervals.icu — "
+            f"this athlete's activity_sync_provider is {provider!r}."
+        )
+
+    if not real:
+        return MockPlanExportAdapter()
+
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    token = token_repo.get_token("INTERVALS_ICU")
+    if token is None:
+        raise click.ClickException(
+            "No intervals.icu API key stored — run `connect-intervals-icu` first."
+        )
+    return RealIntervalsIcuAdapter(token["access_token"])
+
+
 @cli.command(name="sync-session")
 @click.option(
     "--session-type",
@@ -829,6 +853,63 @@ def _print_week_structure(structured: list[dict]) -> None:
             )
         else:
             click.echo(f"  {entry['day']}: {entry['session_type']} — {s['duration_min']:.0f}min")
+
+
+@cli.command(name="push-week")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+@click.option(
+    "--real",
+    is_flag=True,
+    default=False,
+    help="Push to the real intervals.icu API instead of the mock adapter.",
+)
+def push_week(week_start: str, real: bool):
+    """Push a week's generated structured plan to intervals.icu as calendar
+    events — PRD #111, F19.6.
+
+    One event per day. First push creates; re-pushing the same day updates
+    the existing event in place (tracked via weekly_plans.pushed_event_ids_json),
+    not a duplicate.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None:
+        raise click.ClickException(f"no weekly plan stored for week_start_date {week_start!r}")
+
+    if not week.get("generated_structure_json"):
+        raise click.ClickException(
+            f"no generated structure for week_start_date {week_start!r} — "
+            "run `generate-week-structure` first."
+        )
+
+    structured_sessions = json.loads(week["generated_structure_json"])
+    existing_event_ids = json.loads(week.get("pushed_event_ids_json") or "{}")
+
+    profile = plan_repo.get_athlete_profile()
+    adapter = _build_plan_export_adapter(engine, settings, profile, real)
+
+    week_start_date = _date.fromisoformat(week_start)
+    updated_event_ids = dict(existing_event_ids)
+
+    for session in structured_sessions:
+        day = session["day"]
+        event_date = (week_start_date + timedelta(days=WEEKDAYS.index(day))).isoformat()
+        try:
+            event_id = adapter.push_session(event_date, session, existing_event_ids.get(day))
+        except AdapterError as e:
+            raise click.ClickException(str(e)) from e
+        updated_event_ids[day] = event_id
+        click.echo(f"  {day}: pushed (event {event_id})")
+
+    plan_repo.update_weekly_plan(week_start, pushed_event_ids_json=json.dumps(updated_event_ids))
+    click.echo(f"Pushed {len(structured_sessions)} sessions for week starting {week_start}.")
 
 
 @cli.command(name="set-monthly-target")

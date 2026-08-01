@@ -140,6 +140,10 @@ weekly_plans = sa.Table(
     # persisted once at generation time — not regenerated on read
     # (regeneration is F19.3's explicit action). PRD #111.
     sa.Column("generated_structure_json", sa.Text, nullable=True),
+    # F19.6 (#121): day -> intervals.icu eventId, e.g. {"Monday": "12345"}.
+    # Lets a re-push update the existing calendar event in place rather
+    # than creating a duplicate. PRD #111, docs/adr/0027.
+    sa.Column("pushed_event_ids_json", sa.Text, nullable=True),
     sa.Column("load_target", sa.Float, nullable=True),
     sa.Column("load_actual", sa.Float, nullable=True),
     sa.Column("skipped_sessions", sa.Text, nullable=True),
