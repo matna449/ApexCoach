@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 
-// F17.1/F17.2 (#83/#84): the web UI's primary screen. Fetches GET
-// /api/morning/context on load (real WHOOP fetch + session resolution +
-// question catalog), then POSTs the answered form to
-// /api/morning/decision (health check -> classify -> decide -> Ollama
-// explain) and renders the result. Follow-up chat is F17.3's job (#85).
+// F17.1/F17.2/F17.3 (#83/#84/#85): the web UI's primary screen. Fetches
+// GET /api/morning/context on load (real WHOOP fetch + session resolution
+// + question catalog), POSTs the answered form to /api/morning/decision
+// (health check -> classify -> decide -> Ollama explain), then offers a
+// POST /api/morning/followup chat loop once an explanation is available.
 const API_BASE_URL = 'http://localhost:8000'
 
 type Biometrics = {
@@ -42,8 +42,12 @@ type DecisionResponse = {
   explanation: string | null
   banner: string | null
   severity: 'WARN' | 'INFO' | null
-  decision_context: unknown
+  decision_context: object
 }
+
+type FollowupResult = { explanation: string | null; banner: string | null; severity: 'WARN' | 'INFO' | null }
+
+type FollowupTurn = { question: string } & FollowupResult
 
 type LoadState =
   | { kind: 'loading' }
@@ -115,6 +119,31 @@ async function submitDecision(
   return { kind: 'decided', context, decision }
 }
 
+async function submitFollowup(
+  decisionContext: object,
+  priorExplanation: string,
+  question: string,
+): Promise<FollowupResult | { error: string }> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/api/morning/followup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision_context: decisionContext,
+        prior_explanation: priorExplanation,
+        question,
+      }),
+    })
+  } catch (err: unknown) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+  if (!res.ok) {
+    return { error: await extractErrorMessage(res, `POST /api/morning/followup returned ${res.status}`) }
+  }
+  return (await res.json()) as FollowupResult
+}
+
 function BiometricsSummary({ biometrics }: { biometrics: Biometrics }) {
   return (
     <dl data-testid="morning-biometrics">
@@ -138,6 +167,87 @@ function QuestionInput({ question }: { question: Question }) {
       {question.text} (1-5)
       <input type="number" min={1} max={5} step={1} name={question.key} required />
     </label>
+  )
+}
+
+function FollowupChat({
+  decisionContext,
+  initialExplanation,
+}: {
+  decisionContext: object
+  initialExplanation: string
+}) {
+  const [turns, setTurns] = useState<FollowupTurn[]>([])
+  const [priorExplanation, setPriorExplanation] = useState(initialExplanation)
+  const [question, setQuestion] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleAsk(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const asked = question.trim()
+    // Empty input ends the loop cleanly — nothing forces further questions.
+    if (!asked) return
+
+    setPending(true)
+    setError(null)
+    const result = await submitFollowup(decisionContext, priorExplanation, asked)
+    setPending(false)
+
+    if ('error' in result) {
+      setError(result.error)
+      return
+    }
+    setTurns((prev) => [...prev, { question: asked, ...result }])
+    // Only advance the conversation on a real answer — a degraded
+    // follow-up keeps the prior explanation as the anchor for the next
+    // question, matching the CLI's _run_followup_loop().
+    if (result.explanation) {
+      setPriorExplanation(result.explanation)
+    }
+    setQuestion('')
+  }
+
+  return (
+    <div data-testid="morning-followup">
+      <h3>Ask a follow-up</h3>
+      <ul>
+        {turns.map((turn, i) => (
+          <li key={i}>
+            <p>
+              <strong>You:</strong> {turn.question}
+            </p>
+            {turn.banner && (
+              <p style={{ color: turn.severity === 'WARN' ? 'orange' : 'inherit' }}>
+                [{turn.severity}] {turn.banner}
+              </p>
+            )}
+            {turn.explanation && (
+              <p data-testid="morning-followup-answer">
+                <strong>Coach:</strong> {turn.explanation}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && (
+        <p style={{ color: 'red' }} data-testid="morning-followup-error">
+          Error: {error}
+        </p>
+      )}
+      <form onSubmit={handleAsk}>
+        <input
+          type="text"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="why? what if I do it anyway?"
+          disabled={pending}
+        />
+        <button type="submit" disabled={pending}>
+          {pending ? 'Asking…' : 'Ask'}
+        </button>
+      </form>
+    </div>
   )
 }
 
@@ -165,6 +275,14 @@ function DecisionResult({ decision }: { decision: DecisionResponse }) {
         </p>
       )}
       {decision.explanation && <p data-testid="morning-explanation">{decision.explanation}</p>}
+      {/* Only offered when there's an explanation to follow up on — matches
+          the CLI's morning command (docs/adr/0023 parity). */}
+      {decision.explanation && (
+        <FollowupChat
+          decisionContext={decision.decision_context}
+          initialExplanation={decision.explanation}
+        />
+      )}
     </div>
   )
 }
