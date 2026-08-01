@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import ExecutionScoreTrendChart from './ExecutionScoreTrendChart'
 import LoadActualVsTargetChart from './LoadActualVsTargetChart'
 import HrvTrendChart from './HrvTrendChart'
 
@@ -39,6 +40,7 @@ function App() {
       {health && (
         <pre data-testid="health-response">{JSON.stringify(health, null, 2)}</pre>
       )}
+      <ExecutionScoreTrendChart />
       <LoadActualVsTargetChart />
       <HrvTrendChart />
     </main>
