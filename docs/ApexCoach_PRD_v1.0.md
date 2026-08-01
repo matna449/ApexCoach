@@ -295,7 +295,7 @@ The system operates across three nested planning horizons. The monthly layer has
 
 - Banister Impulse-Response model for open-standard training load calculation.
 
-- Minimal local web UI: a FastAPI façade over the existing engines/repositories (unchanged, not rewritten) plus a React frontend, with historical trend charts as its first screen. Local-only, single-user, SQLite — the CLI is not replaced. Supersedes the originally-scoped terminal/HTML trend-charts report (docs/adr/0023).
+- Minimal local web UI: a FastAPI façade over the existing engines/repositories (unchanged, not rewritten) plus a React frontend. Local-only, single-user, SQLite — the CLI is not replaced. Supersedes the originally-scoped terminal/HTML trend-charts report (docs/adr/0023). Shipped in two phases: historical trend charts first (HRV/load/execution score — F16.2-4), then the daily morning flow (WHOOP fetch, health check, recommendation, explanation, follow-up — F11.5/F11.6's web equivalent) as the primary screen, with the trend charts moving to a secondary view.
 
 - Full decision matrix test suite and 80%+ code coverage enforced by CI.
 
