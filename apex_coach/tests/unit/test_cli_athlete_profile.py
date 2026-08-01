@@ -103,3 +103,49 @@ def test_set_athlete_profile_rejects_invalid_sex(tmp_path):
         result = runner.invoke(cli, ["set-athlete-profile", "--sex", "OTHER"])
 
     assert result.exit_code != 0
+
+
+# -- activity_sync_provider (F18.4 / #93, docs/adr/0025) ---------------------
+
+
+def test_set_athlete_profile_stores_activity_sync_provider(tmp_path):
+    db_path = tmp_path / "test.db"
+    runner = CliRunner()
+    _init_db(runner, db_path)
+
+    with patch.dict(os.environ, _env(db_path), clear=True):
+        create = runner.invoke(
+            cli, ["set-athlete-profile", "--activity-sync-provider", "INTERVALS_ICU"]
+        )
+        assert create.exit_code == 0, create.output
+
+        show = runner.invoke(cli, ["set-athlete-profile", "--show"])
+
+    assert show.exit_code == 0, show.output
+    assert "Activity sync provider: INTERVALS_ICU" in show.output
+
+
+def test_set_athlete_profile_show_defaults_provider_to_strava_when_unset(tmp_path):
+    db_path = tmp_path / "test.db"
+    runner = CliRunner()
+    _init_db(runner, db_path)
+
+    with patch.dict(os.environ, _env(db_path), clear=True):
+        runner.invoke(cli, ["set-athlete-profile", "--max-hr", "190"])
+        show = runner.invoke(cli, ["set-athlete-profile", "--show"])
+
+    assert show.exit_code == 0, show.output
+    assert "Activity sync provider: STRAVA" in show.output
+
+
+def test_set_athlete_profile_rejects_invalid_activity_sync_provider(tmp_path):
+    db_path = tmp_path / "test.db"
+    runner = CliRunner()
+    _init_db(runner, db_path)
+
+    with patch.dict(os.environ, _env(db_path), clear=True):
+        result = runner.invoke(
+            cli, ["set-athlete-profile", "--activity-sync-provider", "GARMIN_CONNECT"]
+        )
+
+    assert result.exit_code != 0

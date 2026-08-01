@@ -18,6 +18,7 @@ from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import session_scores
+from apex_coach.db.token_repository import TokenRepository
 from apex_coach.models.pydantic_models import Activity, ActivityStream
 
 ENCRYPTION_KEY = "test-passphrase-not-for-production"
@@ -129,7 +130,7 @@ def test_sync_session_no_new_activities_exits_cleanly(tmp_path):
         )
 
     assert result.exit_code == 0
-    assert "No new Strava activities to sync." in result.output
+    assert "No new activities to sync." in result.output
 
 
 def test_sync_session_strength_full_chain_persists_activity_and_score(tmp_path):
@@ -485,3 +486,166 @@ def test_sync_session_missing_stream_gives_clean_error(tmp_path):
 
     assert result.exit_code != 0
     assert "No HR stream available" in result.output
+
+
+# -- activity_sync_provider dispatch (F18.4 / #93, docs/adr/0025) -----------
+
+
+class FakeIntervalsIcuAdapter:
+    """Stand-in for RealIntervalsIcuAdapter — same shape as FakeStravaAdapter."""
+
+    def __init__(self, activities=None, streams=None):
+        self._activities = activities or []
+        self._streams = streams or {}
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def get_new_activities(self, since_ts):
+        return self._activities
+
+    def get_activity_stream(self, activity_id):
+        return self._streams.get(activity_id)
+
+
+def _set_provider(db_path, provider):
+    engine = create_engine(str(db_path))
+    repo = PlanRepository(engine)
+    repo.update_athlete_profile(activity_sync_provider=provider)
+
+
+def test_sync_session_real_dispatches_to_strava_by_default(tmp_path):
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    _init_db(runner, env)
+
+    strava_activity = _activity(activity_id=201, elapsed_time=900, distance=3000.0)
+    strava_fake = FakeStravaAdapter(activities=[strava_activity], streams={201: _stream([140.0] * 900)})
+    icu_fake = FakeIntervalsIcuAdapter(activities=[])
+
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch("apex_coach.cli.main.RealStravaAdapter", strava_fake),
+        patch("apex_coach.cli.main.RealIntervalsIcuAdapter", icu_fake),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--real",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+                "--rpe",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Synced activity" in result.output
+
+
+def test_sync_session_real_dispatches_to_intervals_icu_when_configured(tmp_path):
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    _init_db(runner, env)
+    _set_provider(tmp_path / "test.db", "INTERVALS_ICU")
+
+    engine = create_engine(str(tmp_path / "test.db"))
+    TokenRepository(engine, ENCRYPTION_KEY).save_token(
+        provider="INTERVALS_ICU",
+        access_token="fake-api-key",
+        refresh_token="",
+        expires_at="",
+        scope="",
+    )
+
+    icu_activity = _activity(activity_id=202, elapsed_time=900, distance=3000.0)
+    icu_fake = FakeIntervalsIcuAdapter(
+        activities=[icu_activity], streams={202: _stream([140.0] * 900)}
+    )
+    strava_fake = FakeStravaAdapter(activities=[])
+
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch("apex_coach.cli.main.RealStravaAdapter", strava_fake),
+        patch("apex_coach.cli.main.RealIntervalsIcuAdapter", icu_fake),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--real",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+                "--rpe",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Synced activity" in result.output
+
+
+def test_sync_session_real_intervals_icu_without_stored_key_gives_clean_error(tmp_path):
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    _init_db(runner, env)
+    _set_provider(tmp_path / "test.db", "INTERVALS_ICU")
+
+    with patch.dict(os.environ, env, clear=True):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--real",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "connect-intervals-icu" in result.output
+
+
+def test_sync_session_mock_dispatches_to_intervals_icu_when_configured(tmp_path):
+    """Without --real, dispatch still follows activity_sync_provider —
+    MockIntervalsIcuAdapter's fixture activity id (987654321) rather than
+    MockStravaAdapter's (12748392017)."""
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    _init_db(runner, env)
+    _set_provider(tmp_path / "test.db", "INTERVALS_ICU")
+
+    with patch.dict(os.environ, env, clear=True):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+                "--rpe",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    engine = create_engine(str(tmp_path / "test.db"))
+    with engine.begin() as conn:
+        rows = conn.execute(sa.text("SELECT strava_id FROM activities")).mappings().all()
+    assert rows[0]["strava_id"] == "987654321"
