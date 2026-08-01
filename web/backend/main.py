@@ -16,20 +16,33 @@ handlers added by later tickets should follow that same pattern.
 """
 
 from datetime import date, datetime, timezone, timedelta
+from types import SimpleNamespace
 
 import click
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from apex_coach.adapters.errors import AdapterError
+from apex_coach.adapters.ollama_adapter import RealOllamaAdapter
 from apex_coach.adapters.whoop_adapter import RealWhoopAdapter
-from apex_coach.cli.main import SESSION_TYPES, _resolve_todays_session
+from apex_coach.cli.main import (
+    SESSION_TYPES,
+    _resolve_todays_session,
+    persist_decision_with_explanation,
+    run_decision_pipeline,
+)
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.token_repository import TokenRepository
-from apex_coach.services.health_check import FIXED_QUESTIONS, get_adaptive_questions
+from apex_coach.services.health_check import (
+    FIXED_QUESTIONS,
+    evaluate_health_check,
+    get_adaptive_questions,
+    persist_health_check,
+)
 
 # Loaded at import time so a missing APEX_ENCRYPTION_KEY (or other required
 # env var) fails fast on startup, exactly like the CLI does — not used yet,
@@ -153,6 +166,121 @@ def morning_context(
         "session_type": resolved_session_type,
         "biometrics": biometrics,
         "questions": _question_catalog(resolved_session_type),
+    }
+
+
+# -- F17.2: morning decision (health check -> classify -> decide -> --------
+# -- persist -> Ollama explain) ---------------------------------------------
+#
+# Reuses apex_coach.cli.main.run_decision_pipeline()/
+# persist_decision_with_explanation() — extracted from the CLI's own
+# `morning` command in this same ticket specifically so the API Contract
+# §4.3 Decision Context shape has exactly one implementation, not two that
+# could drift (docs/adr/0023).
+
+
+class MorningDecisionRequest(BaseModel):
+    date: str
+    session_type: str
+    fixed_answers: dict[str, int]
+    adaptive_answers: dict[str, int]
+
+
+@app.post("/api/morning/decision")
+def morning_decision(request: MorningDecisionRequest) -> dict:
+    """Runs the health check, classification, and daily decision engine
+    against WHOOP data already fetched by a prior GET /api/morning/context
+    call for the same date, persists the Decision Output (bare row first,
+    then a fuller row with the explanation once Ollama succeeds — same
+    crash-safe ordering as the CLI, ADR-0001), and returns the
+    recommendation/rationale/explanation plus the Decision Context (the
+    frontend needs it verbatim for follow-up calls, #85)."""
+    if request.session_type not in SESSION_TYPES:
+        raise HTTPException(status_code=400, detail=f"unknown session_type: {request.session_type!r}")
+
+    day_row = metrics_repo.get_daily_metrics(request.date)
+    if (
+        day_row is None
+        or day_row["whoop_recovery_pct"] is None
+        or day_row["whoop_hrv_ms"] is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="no WHOOP data persisted for this date — call GET /api/morning/context first",
+        )
+
+    # Re-resolve rather than trust the client's session_type blindly — this
+    # is the same lookup GET /api/morning/context already did, idempotent,
+    # and confirms the session_type still matches the current plan/fallback
+    # (e.g. the athlete could have replanned the week between the two calls).
+    try:
+        resolved_session_type, week_plan, week_sessions, weekday_name, _week_start = (
+            _resolve_todays_session(plan_repo, request.date, request.session_type)
+        )
+    except click.ClickException as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    try:
+        health_result = evaluate_health_check(
+            resolved_session_type, request.fixed_answers, request.adaptive_answers
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    persist_health_check(metrics_repo, request.date, health_result)
+
+    # WHOOP was already fetched (and persisted) by GET /api/morning/context
+    # in an earlier request — run_decision_pipeline() only needs the 4
+    # biometric attributes, so a SimpleNamespace built from the persisted
+    # row satisfies its duck-typed `whoop_payload` interface without
+    # re-fetching from WHOOP a second time for the same date.
+    whoop_payload = SimpleNamespace(
+        whoop_recovery_pct=day_row["whoop_recovery_pct"],
+        whoop_hrv_ms=day_row["whoop_hrv_ms"],
+        whoop_rhr_bpm=day_row["whoop_rhr_bpm"],
+        whoop_strain=day_row["whoop_strain"],
+    )
+
+    try:
+        decision_result, decision_context = run_decision_pipeline(
+            plan_repo,
+            metrics_repo,
+            request.date,
+            resolved_session_type,
+            whoop_payload,
+            request.fixed_answers,
+            request.adaptive_answers,
+            health_result,
+            week_plan,
+            week_sessions,
+            weekday_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    ollama_adapter = RealOllamaAdapter()
+    explanation_result = ollama_adapter.explain(decision_context)
+
+    if not explanation_result.degraded:
+        persist_decision_with_explanation(
+            plan_repo,
+            request.date,
+            resolved_session_type,
+            decision_result,
+            decision_context,
+            explanation_result.explanation,
+        )
+
+    return {
+        "recommendation": decision_result["recommendation"],
+        "rationale": decision_result["rationale"],
+        "check_recovery_week_trigger": decision_result["check_recovery_week_trigger"],
+        "override_triggered": health_result["override_triggered"],
+        "override_reasons": health_result["override_reasons"],
+        "explanation": explanation_result.explanation,
+        "banner": explanation_result.banner,
+        "severity": explanation_result.severity,
+        "decision_context": decision_context,
     }
 
 

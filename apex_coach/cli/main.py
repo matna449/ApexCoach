@@ -882,6 +882,128 @@ def _resolve_athlete_context(plan_repo, date_str):
     }
 
 
+def run_decision_pipeline(
+    plan_repo,
+    metrics_repo,
+    date_str: str,
+    resolved_session_type: str,
+    whoop_payload,
+    fixed_answers: dict,
+    adaptive_answers: dict,
+    health_result: dict,
+    week_plan: dict | None,
+    week_sessions: list,
+    weekday_name: str,
+) -> tuple[dict, dict]:
+    """Steps 5-9 of the morning pipeline, shared by the CLI's `morning`
+    command and the web backend's `POST /api/morning/decision` (F17.2,
+    #84) — the exact API Contract §4.3 Decision Context shape must not
+    drift between the two surfaces, so this is the one place it's built.
+
+    `whoop_payload` only needs `.whoop_recovery_pct`/`.whoop_hrv_ms`/
+    `.whoop_rhr_bpm`/`.whoop_strain` attributes — a `WhoopDailyPayload`
+    (CLI, freshly fetched) or a `types.SimpleNamespace` built from an
+    already-persisted `daily_metrics` row (web, since the fetch happened
+    in an earlier request) both satisfy this duck-typed interface.
+
+    Persists the bare Decision Output via `insert_decision()` before
+    returning — a crash or Ollama failure downstream must never lose the
+    decision itself (ADR-0001).
+
+    Returns `(decision_result, decision_context)`.
+    """
+    hrv_30d_avg_ms = resolve_hrv_30d_avg_for_classification(
+        metrics_repo, date_str, whoop_payload.whoop_hrv_ms
+    )
+
+    classification = classify_daily_inputs(
+        whoop_payload, fixed_answers["muscle_soreness"], hrv_30d_avg_ms
+    )
+
+    tomorrow_session_type = _tomorrow_session_type(week_sessions, weekday_name)
+    decision_result = make_decision(
+        session_type=resolved_session_type,
+        recovery_band=classification["recovery_band"],
+        hrv_signal=classification["hrv_delta_band"],
+        soreness_band=classification["soreness_band"],
+        override_triggered=health_result["override_triggered"],
+        override_reasons=health_result["override_reasons"] or None,
+        tomorrow_session_type=tomorrow_session_type,
+    )
+
+    rationale_dict = {
+        "recovery_zone": (
+            f"{classification['recovery_band'].value} ({classification['recovery_pct']}%)"
+        ),
+        "hrv_signal": (
+            f"{classification['hrv_delta_band'].value} "
+            f"({classification['hrv_delta_ms']:+.1f}ms vs 30d avg)"
+        ),
+        "soreness_level": (
+            f"{classification['soreness_band'].value} ({fixed_answers['muscle_soreness']}/5)"
+        ),
+        "rule_applied": decision_result["rationale"] or "(no additional rationale)",
+    }
+
+    plan_repo.insert_decision(
+        date=date_str,
+        scheduled_session=resolved_session_type,
+        recommendation=decision_result["recommendation"],
+        rationale_json=json.dumps(rationale_dict),
+    )
+
+    decision_context = {
+        "date": date_str,
+        "athlete_context": _resolve_athlete_context(plan_repo, date_str),
+        "todays_plan": {
+            "scheduled_session": resolved_session_type,
+            "session_description": SESSION_DESCRIPTIONS[resolved_session_type],
+        },
+        "biometrics": {
+            "whoop_recovery_pct": whoop_payload.whoop_recovery_pct,
+            "whoop_hrv_ms": whoop_payload.whoop_hrv_ms,
+            "hrv_30d_avg_ms": hrv_30d_avg_ms,
+            "hrv_delta_ms": classification["hrv_delta_ms"],
+            "hrv_signal": classification["hrv_delta_band"].value,
+            "whoop_rhr_bpm": whoop_payload.whoop_rhr_bpm,
+            "whoop_strain_so_far": whoop_payload.whoop_strain,
+        },
+        "morning_check": {
+            "muscle_soreness": fixed_answers["muscle_soreness"],
+            "subjective_energy": fixed_answers["subjective_energy"],
+            "sleep_quality_felt": fixed_answers["sleep_quality_felt"],
+            "adaptive_checks": adaptive_answers,
+        },
+        "decision": {
+            "recommendation": decision_result["recommendation"],
+            "rationale": rationale_dict,
+        },
+        "weekly_context": {
+            "week_status": week_plan["week_status"] if week_plan else None,
+            "load_actual": week_plan["load_actual"] if week_plan else None,
+            "load_target": week_plan["load_target"] if week_plan else None,
+            "sessions_remaining": _sessions_remaining(week_sessions, weekday_name),
+        },
+    }
+
+    return decision_result, decision_context
+
+
+def persist_decision_with_explanation(plan_repo, date_str, resolved_session_type, decision_result, decision_context, llm_explanation) -> None:
+    """The second, fuller decisions row inserted once Ollama succeeds —
+    decisions is append-only (ADR-0003/0007); get_decision() returns the
+    latest by created_at, so this becomes the record of what the athlete
+    actually saw, while the bare pre-Ollama row remains the crash-safe
+    one. Shared by the CLI and the web backend (F17.2, #84)."""
+    plan_repo.insert_decision(
+        date=date_str,
+        scheduled_session=resolved_session_type,
+        recommendation=decision_result["recommendation"],
+        rationale_json=json.dumps(decision_context["decision"]["rationale"]),
+        llm_explanation=llm_explanation,
+    )
+
+
 @cli.command()
 @click.option(
     "--date",
@@ -966,105 +1088,37 @@ def morning(date: str | None, session_type: str | None, real: bool):
             click.echo(f"  - {reason}")
     persist_health_check(metrics_repo, date, health_result)
 
-    # 5. Compute hrv_30d_avg_ms (#44)
-    hrv_30d_avg_ms = resolve_hrv_30d_avg_for_classification(
-        metrics_repo, date, whoop_payload.whoop_hrv_ms
-    )
-
-    # 6. Classify via orchestrator.classify_daily_inputs()
+    # 5-9. HRV baseline, classify, decide, persist the bare Decision Output,
+    # assemble the Decision Context (API Contract §4.3) — shared with the
+    # web backend's POST /api/morning/decision (F17.2, #84).
     try:
-        classification = classify_daily_inputs(
-            whoop_payload, fixed_answers["muscle_soreness"], hrv_30d_avg_ms
+        decision_result, decision_context = run_decision_pipeline(
+            plan_repo,
+            metrics_repo,
+            date,
+            resolved_session_type,
+            whoop_payload,
+            fixed_answers,
+            adaptive_answers,
+            health_result,
+            week_plan,
+            week_sessions,
+            weekday_name,
         )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
-
-    # 7. Run daily_engine.make_decision()
-    tomorrow_session_type = _tomorrow_session_type(week_sessions, weekday_name)
-    decision_result = make_decision(
-        session_type=resolved_session_type,
-        recovery_band=classification["recovery_band"],
-        hrv_signal=classification["hrv_delta_band"],
-        soreness_band=classification["soreness_band"],
-        override_triggered=health_result["override_triggered"],
-        override_reasons=health_result["override_reasons"] or None,
-        tomorrow_session_type=tomorrow_session_type,
-    )
-
-    rationale_dict = {
-        "recovery_zone": (
-            f"{classification['recovery_band'].value} ({classification['recovery_pct']}%)"
-        ),
-        "hrv_signal": (
-            f"{classification['hrv_delta_band'].value} "
-            f"({classification['hrv_delta_ms']:+.1f}ms vs 30d avg)"
-        ),
-        "soreness_level": (
-            f"{classification['soreness_band'].value} ({fixed_answers['muscle_soreness']}/5)"
-        ),
-        "rule_applied": decision_result["rationale"] or "(no additional rationale)",
-    }
-
-    # 8. Persist the Decision Output via PlanRepository.insert_decision()
-    # BEFORE calling Ollama — a crash or Ollama failure must never lose the
-    # decision itself (ADR-0001: Ollama explains, never decides).
-    plan_repo.insert_decision(
-        date=date,
-        scheduled_session=resolved_session_type,
-        recommendation=decision_result["recommendation"],
-        rationale_json=json.dumps(rationale_dict),
-    )
-
-    # 9. Assemble the Decision Context (API Contract §4.3's exact shape)
-    # and call Ollama.
-    decision_context = {
-        "date": date,
-        "athlete_context": _resolve_athlete_context(plan_repo, date),
-        "todays_plan": {
-            "scheduled_session": resolved_session_type,
-            "session_description": SESSION_DESCRIPTIONS[resolved_session_type],
-        },
-        "biometrics": {
-            "whoop_recovery_pct": whoop_payload.whoop_recovery_pct,
-            "whoop_hrv_ms": whoop_payload.whoop_hrv_ms,
-            "hrv_30d_avg_ms": hrv_30d_avg_ms,
-            "hrv_delta_ms": classification["hrv_delta_ms"],
-            "hrv_signal": classification["hrv_delta_band"].value,
-            "whoop_rhr_bpm": whoop_payload.whoop_rhr_bpm,
-            "whoop_strain_so_far": whoop_payload.whoop_strain,
-        },
-        "morning_check": {
-            "muscle_soreness": fixed_answers["muscle_soreness"],
-            "subjective_energy": fixed_answers["subjective_energy"],
-            "sleep_quality_felt": fixed_answers["sleep_quality_felt"],
-            "adaptive_checks": adaptive_answers,
-        },
-        "decision": {
-            "recommendation": decision_result["recommendation"],
-            "rationale": rationale_dict,
-        },
-        "weekly_context": {
-            "week_status": week_plan["week_status"] if week_plan else None,
-            "load_actual": week_plan["load_actual"] if week_plan else None,
-            "load_target": week_plan["load_target"] if week_plan else None,
-            "sessions_remaining": _sessions_remaining(week_sessions, weekday_name),
-        },
-    }
 
     ollama_adapter = RealOllamaAdapter() if real else MockOllamaAdapter()
     explanation_result = ollama_adapter.explain(decision_context)
 
     if not explanation_result.degraded:
-        # A second, fuller row — decisions is append-only (ADR-0003/0007);
-        # get_decision() returns the latest by created_at, so this becomes
-        # the record of what the athlete actually saw once Ollama succeeds,
-        # while the bare pre-Ollama row above remains the crash-safe one.
-        plan_repo.insert_decision(
-            date=date,
-            scheduled_session=resolved_session_type,
-            recommendation=decision_result["recommendation"],
-            rationale_json=json.dumps(rationale_dict),
-            llm_explanation=explanation_result.explanation,
+        persist_decision_with_explanation(
+            plan_repo,
+            date,
+            resolved_session_type,
+            decision_result,
+            decision_context,
+            explanation_result.explanation,
         )
 
     # 10. Print the recommendation, rationale, and explanation (plus any
