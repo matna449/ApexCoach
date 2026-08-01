@@ -63,13 +63,13 @@ def execution_score_trend(
     (for each activity in range, fetch its most recent session_scores row and
     keep the ones that have one).
     """
-    activities = repo.get_activities_range(start_date, end_date)
+    activities = metrics_repo.get_activities_range(start_date, end_date)
 
     points = []
     overpush_count = 0
     underpush_count = 0
     for activity in activities:
-        score = repo.get_session_score(activity["id"])
+        score = metrics_repo.get_session_score(activity["id"])
         if score is None:
             continue
         points.append(
@@ -95,6 +95,8 @@ def execution_score_trend(
         "overpush_count": overpush_count,
         "underpush_count": underpush_count,
     }
+
+
 # -- F16.3: load actual vs. target (weekly + monthly) -----------------------
 #
 # PlanRepository has no "get a range of weeks/months" method, only a
