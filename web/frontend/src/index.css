@@ -1,111 +1,139 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/*
+ * F19.1 (#104): design-token system. ADR-0026 decided Tailwind as the
+ * mechanism; PRD #102's "Implementation Decisions" section defines the
+ * actual token values expressed below. This replaces the old generic
+ * light/dark starter palette that used to live in this file.
+ *
+ * Dark is the primary, designed palette; light is a systematic inversion
+ * of the same token *roles* (same relative separation between
+ * page/panel/card and between the text tiers), not a separately
+ * art-directed palette. The active theme is driven by a `dark` class on
+ * <html> (see useTheme.ts) -- Tailwind's standard class-based dark-mode
+ * strategy -- rather than `prefers-color-scheme` alone, so a manual
+ * toggle can override the OS setting and persist.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Spacing: Tailwind's default --spacing (0.25rem = 4px) is already the
+     4px-based scale this system calls for -- no override needed here. */
+
+  /* Small, sharp, instrument-panel-leaning radius scale -- deliberately
+     tighter than Tailwind's defaults (which run up to 24px/rounded-3xl). */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  /* Surface + text roles, backed by CSS custom properties that flip
+     between the :root (light) and .dark blocks below. Utilities like
+     bg-surface-page/text-text-primary repaint for both themes with no
+     dark: prefix required at the call site. */
+  --color-surface-page: var(--surface-page);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-card: var(--surface-card);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text-heading: var(--text-heading);
+  --color-text-primary: var(--text-primary);
+  --color-text-muted: var(--text-muted);
+
+  /* Signature accent -- reserved exclusively for the recommendation/
+     verdict stamp built in a later ticket (#105). Not applied anywhere in
+     this ticket; defined now so downstream tickets have a stable name and
+     it never gets diluted by other uses. */
+  --color-accent: var(--accent);
+
+  /* Muted, desaturated three-step status scale for Recovery Band / HRV
+     Delta indicators (later tickets) -- deliberately quieter than
+     --color-accent so the two systems never visually compete. */
+  --color-status-good: var(--status-good);
+  --color-status-warn: var(--status-warn);
+  --color-status-bad: var(--status-bad);
+}
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  color-scheme: light;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Near-white page, progressively brighter panel/card steps -- the
+     light-mode mirror of the dark scale's page-darkest/card-lightest
+     relationship. */
+  --surface-page: #eef0f3;
+  --surface-panel: #f7f8fa;
+  --surface-card: #ffffff;
+  --border: #dfe2e8;
+  --border-strong: #c7cbd3;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --text-heading: #10131a;
+  --text-primary: #3a4048;
+  --text-muted: #6b7280;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
+  --accent: #5b45e0;
+
+  --status-good: #3f8f5c;
+  --status-warn: #a17a1f;
+  --status-bad: #a8433f;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Near-black page, stepped up through panel/card so page vs. panel vs.
+     card stay visually distinct instead of collapsing into one block. */
+  --surface-page: #0b0d10;
+  --surface-panel: #14171c;
+  --surface-card: #1c2028;
+  --border: #2a2f38;
+  --border-strong: #3c4250;
+
+  --text-heading: #f2f4f7;
+  --text-primary: #c9ced6;
+  --text-muted: #8891a0;
+
+  --accent: #7c6bff;
+
+  --status-good: #5fae7a;
+  --status-warn: #c9a34d;
+  --status-bad: #c0615f;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--color-border);
   }
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  body {
+    @apply bg-surface-page text-text-primary;
+    margin: 0;
+    min-height: 100svh;
   }
-}
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-text-heading;
+    font-weight: 600;
   }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+  code,
+  pre {
+    font-family: var(--font-mono);
   }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
 }

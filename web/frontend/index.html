@@ -5,6 +5,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ApexCoach</title>
+    <script>
+      // F19.1 (#104): apply the persisted/OS-default theme before first
+      // paint so there's no flash of the wrong theme. Mirrors
+      // src/useTheme.ts's getInitialTheme() -- keep the two in sync.
+      (function () {
+        try {
+          var stored = localStorage.getItem('apexcoach-theme')
+          var theme =
+            stored === 'dark' || stored === 'light'
+              ? stored
+              : window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          if (theme === 'dark') document.documentElement.classList.add('dark')
+        } catch (e) {
+          // Storage unavailable -- leave the default (light) theme.
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
