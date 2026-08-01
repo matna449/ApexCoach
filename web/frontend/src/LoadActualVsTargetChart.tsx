@@ -15,11 +15,25 @@ import {
 // renders each as a grouped bar chart (actual vs. target per period).
 const API_BASE_URL = 'http://localhost:8000'
 
-// Fixed categorical assignment (dataviz skill: assign hues in a fixed order,
-// never cycle by rank) — slot 1 (blue) is always "actual", slot 2 (green)
-// is always "target", in both light and dark mode.
-const COLOR_ACTUAL = { light: '#2a78d6', dark: '#3987e5' }
-const COLOR_TARGET = { light: '#008300', dark: '#008300' }
+// F19.4 (#107): fixed categorical assignment (dataviz skill: assign hues in
+// a fixed order, never cycle by rank) — "Actual" is the single most
+// important series here (what really happened), so it gets the reserved
+// signature accent token; "Target" is the secondary reference series, so it
+// stays a muted neutral tone rather than competing for attention. Both are
+// CSS custom properties that resolve against index.css's :root/.dark
+// blocks, so they track the manual theme toggle (useTheme.ts) directly
+// instead of the OS-only prefers-color-scheme query this file used before.
+const COLOR_ACTUAL = 'var(--color-accent)'
+const COLOR_TARGET = 'var(--color-border-strong)'
+const AXIS_TICK_STYLE = { fill: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', fontSize: 12 }
+const TOOLTIP_CONTENT_STYLE = {
+  background: 'var(--color-surface-card)',
+  border: '1px solid var(--color-border)',
+  borderRadius: 4,
+  fontFamily: 'var(--font-mono)',
+  fontSize: 12,
+}
+const LEGEND_WRAPPER_STYLE = { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }
 
 type WeeklyLoadPoint = {
   week_start_date: string
@@ -31,19 +45,6 @@ type MonthlyLoadPoint = {
   month_start_date: string
   load_actual_total: number | null
   load_target_total: number | null
-}
-
-function usePrefersDark(): boolean {
-  const [prefersDark, setPrefersDark] = useState(
-    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
-  )
-  useEffect(() => {
-    const mql = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = (e: MediaQueryListEvent) => setPrefersDark(e.matches)
-    mql.addEventListener('change', onChange)
-    return () => mql.removeEventListener('change', onChange)
-  }, [])
-  return prefersDark
 }
 
 function useFetchJson<T>(path: string): { data: T | null; error: string | null } {
@@ -63,36 +64,30 @@ function useFetchJson<T>(path: string): { data: T | null; error: string | null }
   return { data, error }
 }
 
-function WeeklyChart({ isDark }: { isDark: boolean }) {
+function WeeklyChart() {
   const { data, error } = useFetchJson<{ weeks: WeeklyLoadPoint[] }>(
     '/api/load/weekly?weeks=8',
   )
 
   return (
-    <section>
+    <section className="rounded-md border border-border bg-surface-card p-4">
       <h3>Weekly: load actual vs. target</h3>
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-      {!error && !data && <p>Loading…</p>}
+      {error && <p className="text-status-bad">Error: {error}</p>}
+      {!error && !data && <p className="text-text-muted">Loading…</p>}
       {data && (
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={data.weeks} barGap={2} barCategoryGap="20%">
-            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-            <XAxis dataKey="week_start_date" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
-            <Bar
-              dataKey="load_actual"
-              name="Actual"
-              fill={isDark ? COLOR_ACTUAL.dark : COLOR_ACTUAL.light}
-              radius={[4, 4, 0, 0]}
+            <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="week_start_date" tick={AXIS_TICK_STYLE} stroke="var(--color-border)" />
+            <YAxis tick={AXIS_TICK_STYLE} stroke="var(--color-border)" />
+            <Tooltip
+              contentStyle={TOOLTIP_CONTENT_STYLE}
+              labelStyle={{ color: 'var(--color-text-heading)' }}
+              itemStyle={{ color: 'var(--color-text-primary)' }}
             />
-            <Bar
-              dataKey="load_target"
-              name="Target"
-              fill={isDark ? COLOR_TARGET.dark : COLOR_TARGET.light}
-              radius={[4, 4, 0, 0]}
-            />
+            <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} />
+            <Bar dataKey="load_actual" name="Actual" fill={COLOR_ACTUAL} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="load_target" name="Target" fill={COLOR_TARGET} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       )}
@@ -100,34 +95,38 @@ function WeeklyChart({ isDark }: { isDark: boolean }) {
   )
 }
 
-function MonthlyChart({ isDark }: { isDark: boolean }) {
+function MonthlyChart() {
   const { data, error } = useFetchJson<{ months: MonthlyLoadPoint[] }>(
     '/api/load/monthly?months=6',
   )
 
   return (
-    <section>
+    <section className="rounded-md border border-border bg-surface-card p-4">
       <h3>Monthly: load actual vs. target</h3>
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-      {!error && !data && <p>Loading…</p>}
+      {error && <p className="text-status-bad">Error: {error}</p>}
+      {!error && !data && <p className="text-text-muted">Loading…</p>}
       {data && (
         <ResponsiveContainer width="100%" height={280}>
           <BarChart data={data.months} barGap={2} barCategoryGap="20%">
-            <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-            <XAxis dataKey="month_start_date" tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
-            <Tooltip />
-            <Legend />
+            <CartesianGrid stroke="var(--color-border)" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="month_start_date" tick={AXIS_TICK_STYLE} stroke="var(--color-border)" />
+            <YAxis tick={AXIS_TICK_STYLE} stroke="var(--color-border)" />
+            <Tooltip
+              contentStyle={TOOLTIP_CONTENT_STYLE}
+              labelStyle={{ color: 'var(--color-text-heading)' }}
+              itemStyle={{ color: 'var(--color-text-primary)' }}
+            />
+            <Legend wrapperStyle={LEGEND_WRAPPER_STYLE} />
             <Bar
               dataKey="load_actual_total"
               name="Actual"
-              fill={isDark ? COLOR_ACTUAL.dark : COLOR_ACTUAL.light}
+              fill={COLOR_ACTUAL}
               radius={[4, 4, 0, 0]}
             />
             <Bar
               dataKey="load_target_total"
               name="Target"
-              fill={isDark ? COLOR_TARGET.dark : COLOR_TARGET.light}
+              fill={COLOR_TARGET}
               radius={[4, 4, 0, 0]}
             />
           </BarChart>
@@ -138,13 +137,11 @@ function MonthlyChart({ isDark }: { isDark: boolean }) {
 }
 
 function LoadActualVsTargetChart() {
-  const isDark = usePrefersDark()
-
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       <h2>Load: actual vs. target</h2>
-      <WeeklyChart isDark={isDark} />
-      <MonthlyChart isDark={isDark} />
+      <WeeklyChart />
+      <MonthlyChart />
     </div>
   )
 }

@@ -46,10 +46,11 @@
   --color-text-primary: var(--text-primary);
   --color-text-muted: var(--text-muted);
 
-  /* Signature accent -- reserved exclusively for the recommendation/
-     verdict stamp built in a later ticket (#105). Not applied anywhere in
-     this ticket; defined now so downstream tickets have a stable name and
-     it never gets diluted by other uses. */
+  /* Signature accent -- reserved for the single most important
+     series/highlight wherever it appears: the recommendation/verdict stamp
+     (#105, later ticket) and, as of F19.4 (#107), the one primary series in
+     each History trend chart (execution score, HRV, "load actual"). Not
+     applied to secondary series so it never gets diluted by other uses. */
   --color-accent: var(--accent);
 
   /* Muted, desaturated three-step status scale for Recovery Band / HRV
