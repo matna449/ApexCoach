@@ -15,14 +15,21 @@ Config is loaded the exact same way the CLI loads it — see
 handlers added by later tickets should follow that same pattern.
 """
 
-from datetime import date, timedelta
-from fastapi import FastAPI, Query
+from datetime import date, datetime, timezone, timedelta
+
+import click
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from apex_coach.adapters.errors import AdapterError
+from apex_coach.adapters.whoop_adapter import RealWhoopAdapter
+from apex_coach.cli.main import SESSION_TYPES, _resolve_todays_session
 from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
+from apex_coach.db.token_repository import TokenRepository
+from apex_coach.services.health_check import FIXED_QUESTIONS, get_adaptive_questions
 
 # Loaded at import time so a missing APEX_ENCRYPTION_KEY (or other required
 # env var) fails fast on startup, exactly like the CLI does — not used yet,
@@ -49,6 +56,104 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# -- F17.1: morning context (WHOOP fetch + session resolution + question --
+# -- catalog) --------------------------------------------------------------
+#
+# Reuses apex_coach.cli.main's own `_resolve_todays_session()` rather than
+# reimplementing the plan-lookup/fallback logic a second time (docs/adr/0023
+# — no duplicated business logic). Importing a module-private helper across
+# this boundary is a deliberate, narrow exception: it's a small, already-
+# tested orchestration function with no CLI-specific behavior baked in, and
+# duplicating it would be worse than the cross-module import.
+
+
+def _whoop_biometrics_dict(payload) -> dict:
+    return {
+        "whoop_recovery_pct": payload.whoop_recovery_pct,
+        "whoop_hrv_ms": payload.whoop_hrv_ms,
+        "whoop_rhr_bpm": payload.whoop_rhr_bpm,
+        "whoop_strain": payload.whoop_strain,
+        "whoop_sleep_hours": payload.whoop_sleep_hours,
+    }
+
+
+def _question_catalog(session_type: str) -> dict:
+    return {
+        "fixed": [{"key": key, "text": text} for key, text in FIXED_QUESTIONS],
+        "adaptive": [
+            {"key": q.key, "text": q.text} for q in get_adaptive_questions(session_type)
+        ],
+    }
+
+
+@app.get("/api/morning/context")
+def morning_context(
+    date_param: str | None = Query(default=None, alias="date"),
+    session_type: str | None = Query(
+        default=None, description="Fallback session type, used only if no plan covers `date`."
+    ),
+) -> dict:
+    """Fetch+persist real WHOOP data, resolve today's scheduled session
+    (plan-based, falling back to `session_type` if given), and return the
+    biometrics plus the health-check question catalog for that session.
+
+    If no plan covers `date` and no `session_type` fallback was given,
+    responds 409 with `error: "no_plan_for_date"` and the already-fetched
+    biometrics in the detail body, so the frontend can show a session-type
+    picker alongside the WHOOP data rather than a bare error.
+    """
+    resolved_date = date_param or datetime.now(timezone.utc).date().isoformat()
+    try:
+        date.fromisoformat(resolved_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid date: {resolved_date!r}")
+
+    if session_type is not None and session_type not in SESSION_TYPES:
+        raise HTTPException(status_code=400, detail=f"unknown session_type: {session_type!r}")
+
+    if not settings.whoop_client_id or not settings.whoop_client_secret:
+        raise HTTPException(
+            status_code=400, detail="WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET not set in .env."
+        )
+
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    whoop_adapter = RealWhoopAdapter(
+        token_repo, settings.whoop_client_id, settings.whoop_client_secret
+    )
+    try:
+        whoop_payload = whoop_adapter.get_daily_payload(resolved_date)
+    except AdapterError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    metrics_repo.upsert_daily_metrics(resolved_date, **_whoop_biometrics_dict(whoop_payload))
+    biometrics = _whoop_biometrics_dict(whoop_payload)
+
+    try:
+        resolved_session_type, *_rest = _resolve_todays_session(
+            plan_repo, resolved_date, session_type
+        )
+    except click.ClickException:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "no_plan_for_date",
+                "message": (
+                    "No weekly plan covers this date, and no fallback session_type "
+                    "was given — pick one to continue."
+                ),
+                "biometrics": biometrics,
+                "available_session_types": SESSION_TYPES,
+            },
+        )
+
+    return {
+        "date": resolved_date,
+        "session_type": resolved_session_type,
+        "biometrics": biometrics,
+        "questions": _question_catalog(resolved_session_type),
+    }
 
 
 @app.get("/api/execution-score-trend")
