@@ -136,6 +136,10 @@ weekly_plans = sa.Table(
     sa.Column("week_start_date", sa.String, nullable=False, unique=True),
     sa.Column("planned_sessions_json", sa.Text, nullable=True),
     sa.Column("adapted_plan_json", sa.Text, nullable=True),
+    # F19.2 (#118): pure-engine-generated structured HR-zone breakdown,
+    # persisted once at generation time — not regenerated on read
+    # (regeneration is F19.3's explicit action). PRD #111.
+    sa.Column("generated_structure_json", sa.Text, nullable=True),
     sa.Column("load_target", sa.Float, nullable=True),
     sa.Column("load_actual", sa.Float, nullable=True),
     sa.Column("skipped_sessions", sa.Text, nullable=True),

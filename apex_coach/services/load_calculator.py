@@ -36,6 +36,23 @@ def calculate_hr_based_load(
     return duration_minutes * delta_hr_ratio * 0.64 * math.exp(b * delta_hr_ratio)
 
 
+def invert_duration_for_target_load(
+    target_au: float, avg_hr_bpm: float, resting_hr: float, max_hr: float, sex: str
+) -> float:
+    """Algebraic inverse of calculate_hr_based_load, solved for duration —
+    used by F19.2's plan-structure generator to derive session length from
+    a target load at a fixed representative HR (e.g. a zone's midpoint),
+    rather than the other way round (docs/adr/0027 §grill-me Q5)."""
+    if sex not in TRIMP_B_CONSTANT:
+        raise ValueError(f"sex must be one of {sorted(TRIMP_B_CONSTANT)}, got {sex!r}")
+    if max_hr <= resting_hr:
+        raise ValueError(f"max_hr ({max_hr}) must be greater than resting_hr ({resting_hr})")
+
+    delta_hr_ratio = (avg_hr_bpm - resting_hr) / (max_hr - resting_hr)
+    b = TRIMP_B_CONSTANT[sex]
+    return target_au / (delta_hr_ratio * 0.64 * math.exp(b * delta_hr_ratio))
+
+
 def calculate_rpe_based_load(duration_minutes: float, rpe: int) -> float:
     """Strength sessions — no HR zone target. RPE 6 for 60 min = 60 AU."""
     return (duration_minutes * rpe) / 6
