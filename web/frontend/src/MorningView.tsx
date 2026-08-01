@@ -1,53 +1,28 @@
 import { useEffect, useState } from 'react'
+import type { Biometrics, DecisionResponse, MorningContext, NoPlanDetail } from './morningTypes'
+import ChatBubble from './ChatBubble'
+import TypingIndicator from './TypingIndicator'
+import SelectCard from './SelectCard'
+import BiometricsHeader from './BiometricsHeader'
+import ConversationalHealthCheck from './ConversationalHealthCheck'
+import VerdictStamp from './VerdictStamp'
+import Badge from './Badge'
 
 // F17.1/F17.2/F17.3 (#83/#84/#85): the web UI's primary screen. Fetches
 // GET /api/morning/context on load (real WHOOP fetch + session resolution
-// + question catalog), POSTs the answered form to /api/morning/decision
-// (health check -> classify -> decide -> Ollama explain), then offers a
-// POST /api/morning/followup chat loop once an explanation is available.
+// + question catalog), POSTs the answered health check to
+// /api/morning/decision (health check -> classify -> decide -> Ollama
+// explain), then offers a POST /api/morning/followup chat loop once an
+// explanation is available.
+//
+// F19.2 (#105): rebuilds the presentation as a conversational,
+// one-question-at-a-time chat thread on top of the F19.1 (#104) token
+// system. The data layer below (types, fetchContext/submitDecision/
+// submitFollowup, and the exact request/response shapes) is UNCHANGED from
+// #85 -- only how it's rendered changes.
 const API_BASE_URL = 'http://localhost:8000'
 
-type Biometrics = {
-  whoop_recovery_pct: number | null
-  whoop_hrv_ms: number | null
-  whoop_rhr_bpm: number | null
-  whoop_strain: number | null
-  whoop_sleep_hours: number | null
-}
-
-type Question = { key: string; text: string }
-
-type QuestionCatalog = { fixed: Question[]; adaptive: Question[] }
-
-type MorningContext = {
-  date: string
-  session_type: string
-  biometrics: Biometrics
-  questions: QuestionCatalog
-}
-
-type NoPlanDetail = {
-  error: 'no_plan_for_date'
-  message: string
-  biometrics: Biometrics
-  available_session_types: string[]
-}
-
-type DecisionResponse = {
-  recommendation: string
-  rationale: string | null
-  check_recovery_week_trigger: boolean
-  override_triggered: boolean
-  override_reasons: string[]
-  explanation: string | null
-  banner: string | null
-  severity: 'WARN' | 'INFO' | null
-  decision_context: object
-}
-
-type FollowupResult = { explanation: string | null; banner: string | null; severity: 'WARN' | 'INFO' | null }
-
-type FollowupTurn = { question: string } & FollowupResult
+type DecisionRequestAnswers = { fixedAnswers: Record<string, number>; adaptiveAnswers: Record<string, number> }
 
 type LoadState =
   | { kind: 'loading' }
@@ -119,6 +94,10 @@ async function submitDecision(
   return { kind: 'decided', context, decision }
 }
 
+type FollowupResult = { explanation: string | null; banner: string | null; severity: 'WARN' | 'INFO' | null }
+
+type FollowupTurn = { question: string } & FollowupResult
+
 async function submitFollowup(
   decisionContext: object,
   priorExplanation: string,
@@ -144,32 +123,10 @@ async function submitFollowup(
   return (await res.json()) as FollowupResult
 }
 
-function BiometricsSummary({ biometrics }: { biometrics: Biometrics }) {
-  return (
-    <dl data-testid="morning-biometrics">
-      <dt>Recovery</dt>
-      <dd>{biometrics.whoop_recovery_pct ?? '—'}%</dd>
-      <dt>HRV</dt>
-      <dd>{biometrics.whoop_hrv_ms ?? '—'} ms</dd>
-      <dt>Resting HR</dt>
-      <dd>{biometrics.whoop_rhr_bpm ?? '—'} bpm</dd>
-      <dt>Strain</dt>
-      <dd>{biometrics.whoop_strain ?? '—'}</dd>
-      <dt>Sleep</dt>
-      <dd>{biometrics.whoop_sleep_hours ?? '—'} hrs</dd>
-    </dl>
-  )
-}
-
-function QuestionInput({ question }: { question: Question }) {
-  return (
-    <label>
-      {question.text} (1-5)
-      <input type="number" min={1} max={5} step={1} name={question.key} required />
-    </label>
-  )
-}
-
+// F19.2 (#105): kept present and functional exactly as #85 built it -- its
+// visual restyle into the unified chat thread is a separate ticket (#106)
+// blocked on this one, per the issue's explicit instruction not to touch
+// its appearance here.
 function FollowupChat({
   decisionContext,
   initialExplanation,
@@ -251,37 +208,49 @@ function FollowupChat({
   )
 }
 
+function biometricsFor(state: LoadState): Biometrics | null {
+  if (state.kind === 'need-session-type') return state.detail.biometrics
+  if (state.kind === 'ready' || state.kind === 'submitting' || state.kind === 'decided') return state.context.biometrics
+  return null
+}
+
 function DecisionResult({ decision }: { decision: DecisionResponse }) {
   return (
-    <div data-testid="morning-decision">
-      <p>
-        Recommendation: <strong>{decision.recommendation}</strong>
-      </p>
-      {decision.rationale && <p>Rationale: {decision.rationale}</p>}
-      {decision.check_recovery_week_trigger && <p>⚠️ Recovery week trigger flagged.</p>}
+    <div className="flex flex-col gap-4" data-testid="morning-decision">
+      <VerdictStamp recommendation={decision.recommendation} />
+      {decision.rationale && <ChatBubble speaker="coach">{decision.rationale}</ChatBubble>}
+      {decision.check_recovery_week_trigger && (
+        <Badge tone="warn" testId="recovery-week-flag">
+          Recovery week trigger flagged
+        </Badge>
+      )}
       {decision.override_triggered && (
-        <div data-testid="morning-override">
-          <p>Override triggered:</p>
-          <ul>
+        <div className="flex flex-col gap-1" data-testid="morning-override">
+          <span className="text-sm text-text-muted">Override triggered:</span>
+          <ul className="flex flex-wrap gap-1">
             {decision.override_reasons.map((reason) => (
-              <li key={reason}>{reason}</li>
+              <li key={reason}>
+                <Badge tone="override">{reason}</Badge>
+              </li>
             ))}
           </ul>
         </div>
       )}
       {decision.banner && (
-        <p style={{ color: decision.severity === 'WARN' ? 'orange' : 'inherit' }}>
-          [{decision.severity}] {decision.banner}
-        </p>
+        <div className="flex items-start gap-2" data-testid="morning-banner">
+          <Badge tone={decision.severity === 'WARN' ? 'warn' : 'info'}>{decision.severity}</Badge>
+          <span className="text-sm text-text-primary">{decision.banner}</span>
+        </div>
       )}
-      {decision.explanation && <p data-testid="morning-explanation">{decision.explanation}</p>}
+      {decision.explanation && (
+        <ChatBubble speaker="coach" testId="morning-explanation">
+          {decision.explanation}
+        </ChatBubble>
+      )}
       {/* Only offered when there's an explanation to follow up on — matches
           the CLI's morning command (docs/adr/0023 parity). */}
       {decision.explanation && (
-        <FollowupChat
-          decisionContext={decision.decision_context}
-          initialExplanation={decision.explanation}
-        />
+        <FollowupChat decisionContext={decision.decision_context} initialExplanation={decision.explanation} />
       )}
     </div>
   )
@@ -304,79 +273,59 @@ function MorningView() {
     fetchContext(today, sessionType).then(setState)
   }
 
-  function handleSubmit(context: MorningContext, e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const formData = new FormData(e.currentTarget)
-    const fixedAnswers: Record<string, number> = {}
-    for (const q of context.questions.fixed) {
-      fixedAnswers[q.key] = Number(formData.get(q.key))
-    }
-    const adaptiveAnswers: Record<string, number> = {}
-    for (const q of context.questions.adaptive) {
-      adaptiveAnswers[q.key] = Number(formData.get(q.key))
-    }
+  function handleAnswersSubmit(context: MorningContext, { fixedAnswers, adaptiveAnswers }: DecisionRequestAnswers) {
     setState({ kind: 'submitting', context })
     submitDecision(context, fixedAnswers, adaptiveAnswers).then(setState)
   }
 
+  const biometrics = biometricsFor(state)
+
   return (
-    <section>
-      <h2>Today — {today}</h2>
+    <section className="mx-auto flex max-w-2xl flex-col gap-4" data-testid="morning-view">
+      <h2 className="text-lg font-semibold">Today — {today}</h2>
 
-      {state.kind === 'loading' && <p>Loading…</p>}
+      {biometrics && <BiometricsHeader biometrics={biometrics} />}
 
-      {state.kind === 'error' && (
-        <p style={{ color: 'red' }} data-testid="morning-error">
-          Error: {state.message}
-        </p>
-      )}
+      <div className="flex flex-col gap-3">
+        {state.kind === 'loading' && <TypingIndicator label="Fetching this morning's data…" />}
 
-      {state.kind === 'need-session-type' && (
-        <div data-testid="morning-session-picker">
-          <BiometricsSummary biometrics={state.detail.biometrics} />
-          <p>{state.detail.message}</p>
-          <label>
-            Session type
-            <select
-              defaultValue=""
-              onChange={(e) => {
-                if (e.target.value) pickSessionType(e.target.value)
-              }}
-            >
-              <option value="" disabled>
-                Choose a session type…
-              </option>
+        {state.kind === 'error' && (
+          <ChatBubble speaker="coach" testId="morning-error">
+            Error: {state.message}
+          </ChatBubble>
+        )}
+
+        {state.kind === 'need-session-type' && (
+          <div className="flex flex-col gap-2" data-testid="morning-session-picker">
+            <ChatBubble speaker="coach">{state.detail.message}</ChatBubble>
+            <div className="flex flex-wrap gap-2 pl-1">
               {state.detail.available_session_types.map((sessionType) => (
-                <option key={sessionType} value={sessionType}>
-                  {sessionType}
-                </option>
+                <SelectCard
+                  key={sessionType}
+                  label={sessionType}
+                  onSelect={() => pickSessionType(sessionType)}
+                  testId={`session-type-${sessionType}`}
+                />
               ))}
-            </select>
-          </label>
-        </div>
-      )}
+            </div>
+          </div>
+        )}
 
-      {(state.kind === 'ready' || state.kind === 'submitting') && (
-        <div data-testid="morning-form">
-          <p>
-            Scheduled session: <strong>{state.context.session_type}</strong>
-          </p>
-          <BiometricsSummary biometrics={state.context.biometrics} />
-          <form onSubmit={(e) => handleSubmit(state.context, e)}>
-            {state.context.questions.fixed.map((q) => (
-              <QuestionInput key={q.key} question={q} />
-            ))}
-            {state.context.questions.adaptive.map((q) => (
-              <QuestionInput key={q.key} question={q} />
-            ))}
-            <button type="submit" disabled={state.kind === 'submitting'}>
-              {state.kind === 'submitting' ? 'Thinking…' : 'Get recommendation'}
-            </button>
-          </form>
-        </div>
-      )}
+        {(state.kind === 'ready' || state.kind === 'submitting') && (
+          <ConversationalHealthCheck
+            key={state.context.session_type}
+            questions={state.context.questions}
+            submitting={state.kind === 'submitting'}
+            onSubmit={(fixedAnswers, adaptiveAnswers) =>
+              handleAnswersSubmit(state.context, { fixedAnswers, adaptiveAnswers })
+            }
+          />
+        )}
 
-      {state.kind === 'decided' && <DecisionResult decision={state.decision} />}
+        {state.kind === 'submitting' && <TypingIndicator label="Working out today's recommendation…" />}
+
+        {state.kind === 'decided' && <DecisionResult decision={state.decision} />}
+      </div>
     </section>
   )
 }
