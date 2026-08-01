@@ -284,6 +284,37 @@ def morning_decision(request: MorningDecisionRequest) -> dict:
     }
 
 
+# -- F17.3: morning follow-up (conversational chat loop, #85) --------------
+#
+# Stateless on the server, mirroring apex_coach.cli.main's own
+# `_run_followup_loop()` — the client holds the running conversation
+# (decision_context + latest explanation) and resubmits it each turn.
+
+
+class MorningFollowupRequest(BaseModel):
+    decision_context: dict
+    prior_explanation: str
+    question: str
+
+
+@app.post("/api/morning/followup")
+def morning_followup(request: MorningFollowupRequest) -> dict:
+    """Calls RealOllamaAdapter.ask_followup() with the given
+    decision_context/prior_explanation/question and returns the
+    explanation result (or a degraded banner) — no persistence, the
+    Decision Output itself was already persisted by
+    POST /api/morning/decision."""
+    ollama_adapter = RealOllamaAdapter()
+    result = ollama_adapter.ask_followup(
+        request.decision_context, request.prior_explanation, request.question
+    )
+    return {
+        "explanation": result.explanation,
+        "banner": result.banner,
+        "severity": result.severity,
+    }
+
+
 @app.get("/api/execution-score-trend")
 def execution_score_trend(
     start_date: str = Query(..., description="YYYY-MM-DD, inclusive"),
