@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 
-// F17.1 (#83): the web UI's primary screen. Fetches GET /api/morning/context
-// on load (real WHOOP fetch + session resolution + question catalog, all
-// server-side — see web/backend/main.py). Submitting the form is F17.2's
-// job (POST /api/morning/decision); this ticket renders the form only.
+// F17.1/F17.2 (#83/#84): the web UI's primary screen. Fetches GET
+// /api/morning/context on load (real WHOOP fetch + session resolution +
+// question catalog), then POSTs the answered form to
+// /api/morning/decision (health check -> classify -> decide -> Ollama
+// explain) and renders the result. Follow-up chat is F17.3's job (#85).
 const API_BASE_URL = 'http://localhost:8000'
 
 type Biometrics = {
@@ -32,11 +33,31 @@ type NoPlanDetail = {
   available_session_types: string[]
 }
 
+type DecisionResponse = {
+  recommendation: string
+  rationale: string | null
+  check_recovery_week_trigger: boolean
+  override_triggered: boolean
+  override_reasons: string[]
+  explanation: string | null
+  banner: string | null
+  severity: 'WARN' | 'INFO' | null
+  decision_context: unknown
+}
+
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'need-session-type'; detail: NoPlanDetail }
   | { kind: 'ready'; context: MorningContext }
+  | { kind: 'submitting'; context: MorningContext }
+  | { kind: 'decided'; context: MorningContext; decision: DecisionResponse }
   | { kind: 'error'; message: string }
+
+async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
+  const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
+  const detail = body?.detail
+  return typeof detail === 'string' ? detail : fallback
+}
 
 async function fetchContext(date: string, sessionType?: string): Promise<LoadState> {
   const params = new URLSearchParams({ date })
@@ -54,15 +75,44 @@ async function fetchContext(date: string, sessionType?: string): Promise<LoadSta
     return { kind: 'need-session-type', detail: body.detail }
   }
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
-    const detail = body?.detail
     return {
       kind: 'error',
-      message: typeof detail === 'string' ? detail : `GET /api/morning/context returned ${res.status}`,
+      message: await extractErrorMessage(res, `GET /api/morning/context returned ${res.status}`),
     }
   }
   const context = (await res.json()) as MorningContext
   return { kind: 'ready', context }
+}
+
+async function submitDecision(
+  context: MorningContext,
+  fixedAnswers: Record<string, number>,
+  adaptiveAnswers: Record<string, number>,
+): Promise<LoadState> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/api/morning/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: context.date,
+        session_type: context.session_type,
+        fixed_answers: fixedAnswers,
+        adaptive_answers: adaptiveAnswers,
+      }),
+    })
+  } catch (err: unknown) {
+    return { kind: 'error', message: err instanceof Error ? err.message : String(err) }
+  }
+
+  if (!res.ok) {
+    return {
+      kind: 'error',
+      message: await extractErrorMessage(res, `POST /api/morning/decision returned ${res.status}`),
+    }
+  }
+  const decision = (await res.json()) as DecisionResponse
+  return { kind: 'decided', context, decision }
 }
 
 function BiometricsSummary({ biometrics }: { biometrics: Biometrics }) {
@@ -91,6 +141,34 @@ function QuestionInput({ question }: { question: Question }) {
   )
 }
 
+function DecisionResult({ decision }: { decision: DecisionResponse }) {
+  return (
+    <div data-testid="morning-decision">
+      <p>
+        Recommendation: <strong>{decision.recommendation}</strong>
+      </p>
+      {decision.rationale && <p>Rationale: {decision.rationale}</p>}
+      {decision.check_recovery_week_trigger && <p>⚠️ Recovery week trigger flagged.</p>}
+      {decision.override_triggered && (
+        <div data-testid="morning-override">
+          <p>Override triggered:</p>
+          <ul>
+            {decision.override_reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {decision.banner && (
+        <p style={{ color: decision.severity === 'WARN' ? 'orange' : 'inherit' }}>
+          [{decision.severity}] {decision.banner}
+        </p>
+      )}
+      {decision.explanation && <p data-testid="morning-explanation">{decision.explanation}</p>}
+    </div>
+  )
+}
+
 function MorningView() {
   const today = new Date().toISOString().slice(0, 10)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -106,6 +184,21 @@ function MorningView() {
   function pickSessionType(sessionType: string) {
     setState({ kind: 'loading' })
     fetchContext(today, sessionType).then(setState)
+  }
+
+  function handleSubmit(context: MorningContext, e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const formData = new FormData(e.currentTarget)
+    const fixedAnswers: Record<string, number> = {}
+    for (const q of context.questions.fixed) {
+      fixedAnswers[q.key] = Number(formData.get(q.key))
+    }
+    const adaptiveAnswers: Record<string, number> = {}
+    for (const q of context.questions.adaptive) {
+      adaptiveAnswers[q.key] = Number(formData.get(q.key))
+    }
+    setState({ kind: 'submitting', context })
+    submitDecision(context, fixedAnswers, adaptiveAnswers).then(setState)
   }
 
   return (
@@ -145,29 +238,27 @@ function MorningView() {
         </div>
       )}
 
-      {state.kind === 'ready' && (
+      {(state.kind === 'ready' || state.kind === 'submitting') && (
         <div data-testid="morning-form">
           <p>
             Scheduled session: <strong>{state.context.session_type}</strong>
           </p>
           <BiometricsSummary biometrics={state.context.biometrics} />
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-            }}
-          >
+          <form onSubmit={(e) => handleSubmit(state.context, e)}>
             {state.context.questions.fixed.map((q) => (
               <QuestionInput key={q.key} question={q} />
             ))}
             {state.context.questions.adaptive.map((q) => (
               <QuestionInput key={q.key} question={q} />
             ))}
-            <button type="submit" disabled title="Coming in F17.2">
-              Get recommendation
+            <button type="submit" disabled={state.kind === 'submitting'}>
+              {state.kind === 'submitting' ? 'Thinking…' : 'Get recommendation'}
             </button>
           </form>
         </div>
       )}
+
+      {state.kind === 'decided' && <DecisionResult decision={state.decision} />}
     </section>
   )
 }
