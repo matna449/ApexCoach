@@ -113,7 +113,7 @@ MOCK_STREAM_PAYLOAD = {
 
 class ActivitySyncAdapterProtocol(Protocol):
     def get_new_activities(self, since_ts: int) -> list[Activity]: ...
-    def get_activity_stream(self, activity_id: int) -> ActivityStream | None: ...
+    def get_activity_stream(self, activity_id: int | str) -> ActivityStream | None: ...
 
 
 class MockStravaAdapter:
@@ -140,7 +140,7 @@ class MockStravaAdapter:
             return []
         return [activity]
 
-    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
+    def get_activity_stream(self, activity_id: int | str) -> ActivityStream | None:
         if activity_id != MOCK_ACTIVITY_PAYLOAD["id"]:
             return None
 
@@ -329,7 +329,7 @@ class RealStravaAdapter:
             raise AdapterMalformedResponseError(str(e)) from e
         return activities
 
-    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
+    def get_activity_stream(self, activity_id: int | str) -> ActivityStream | None:
         try:
             payload = self._get(
                 f"/activities/{activity_id}/streams",

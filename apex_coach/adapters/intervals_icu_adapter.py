@@ -121,7 +121,9 @@ def _streams_to_activity_stream(records: list[dict]) -> ActivityStream:
 # same _record_to_activity()/_streams_to_activity_stream() mapping the real
 # adapter uses.
 MOCK_ACTIVITY_RECORD = {
-    "id": 987654321,
+    # intervals.icu ids are strings prefixed "i" (confirmed against a real
+    # account — F18.5/#94), unlike Strava's plain integer ids.
+    "id": "i987654321",
     "name": "Tuesday Threshold - Track Session",
     "type": "Run",
     "start_date_local": "2026-06-23T06:30:00",
@@ -177,7 +179,7 @@ class MockIntervalsIcuAdapter:
             return []
         return [activity]
 
-    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
+    def get_activity_stream(self, activity_id: int | str) -> ActivityStream | None:
         if activity_id != MOCK_ACTIVITY_RECORD["id"]:
             return None
 
@@ -248,7 +250,7 @@ class RealIntervalsIcuAdapter:
         # exact since_ts cutoff (mirrors strava_adapter's after= handling).
         return [a for a in activities if a.start_date.timestamp() > since_ts]
 
-    def get_activity_stream(self, activity_id: int) -> ActivityStream | None:
+    def get_activity_stream(self, activity_id: int | str) -> ActivityStream | None:
         try:
             records = self._get(
                 f"/activity/{activity_id}/streams.json",
