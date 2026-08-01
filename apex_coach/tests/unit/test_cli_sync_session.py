@@ -101,8 +101,11 @@ def _init_db(runner, env):
     # harmless for the RPE-based/no-activity tests in this file that don't
     # reach the HR-based load path at all.
     db_path = env["DATABASE_URL"].removeprefix("sqlite:///")
+    # Pinned to STRAVA — these fixtures predate F18.6/#95's default flip to
+    # INTERVALS_ICU and deliberately exercise the Strava path via
+    # FakeStravaAdapter; the provider-dispatch tests below override this.
     PlanRepository(create_engine(db_path)).insert_athlete_profile(
-        max_hr=190, baseline_resting_hr=50, sex="MALE"
+        max_hr=190, baseline_resting_hr=50, sex="MALE", activity_sync_provider="STRAVA"
     )
 
 
@@ -514,14 +517,67 @@ def _set_provider(db_path, provider):
     repo.update_athlete_profile(activity_sync_provider=provider)
 
 
-def test_sync_session_real_dispatches_to_strava_by_default(tmp_path):
+def test_sync_session_real_dispatches_to_strava_when_configured(tmp_path):
     runner = CliRunner()
     env = _env(tmp_path / "test.db")
-    _init_db(runner, env)
+    _init_db(runner, env)  # pins STRAVA — see _init_db's comment
 
     strava_activity = _activity(activity_id=201, elapsed_time=900, distance=3000.0)
     strava_fake = FakeStravaAdapter(activities=[strava_activity], streams={201: _stream([140.0] * 900)})
     icu_fake = FakeIntervalsIcuAdapter(activities=[])
+
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch("apex_coach.cli.main.RealStravaAdapter", strava_fake),
+        patch("apex_coach.cli.main.RealIntervalsIcuAdapter", icu_fake),
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "sync-session",
+                "--real",
+                "--session-type",
+                "Zone2_Short",
+                "--max-hr",
+                "190",
+                "--resting-hr",
+                "50",
+                "--rpe",
+                "4",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Synced activity" in result.output
+
+
+def test_sync_session_real_dispatches_to_intervals_icu_when_provider_unset(tmp_path):
+    """F18.6/#95 — a NULL activity_sync_provider (never explicitly set)
+    defaults to INTERVALS_ICU, not STRAVA."""
+    runner = CliRunner()
+    env = _env(tmp_path / "test.db")
+    with patch.dict(os.environ, env, clear=True):
+        result = runner.invoke(cli, ["init-db"])
+    assert result.exit_code == 0
+    db_path = env["DATABASE_URL"].removeprefix("sqlite:///")
+    PlanRepository(create_engine(db_path)).insert_athlete_profile(
+        max_hr=190, baseline_resting_hr=50, sex="MALE"  # no activity_sync_provider
+    )
+
+    engine = create_engine(db_path)
+    TokenRepository(engine, ENCRYPTION_KEY).save_token(
+        provider="INTERVALS_ICU",
+        access_token="fake-api-key",
+        refresh_token="",
+        expires_at="",
+        scope="",
+    )
+
+    icu_activity = _activity(activity_id=203, elapsed_time=900, distance=3000.0)
+    icu_fake = FakeIntervalsIcuAdapter(
+        activities=[icu_activity], streams={203: _stream([140.0] * 900)}
+    )
+    strava_fake = FakeStravaAdapter(activities=[])
 
     with (
         patch.dict(os.environ, env, clear=True),

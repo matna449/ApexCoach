@@ -68,10 +68,12 @@ PERIODISATION_PHASES = ["BASE", "BUILD", "PEAK", "TAPER", "RECOVERY"]
 ATHLETE_SEX_CHOICES = ["MALE", "FEMALE"]
 
 # docs/adr/0025 (PRD #89) — which adapter sync-session dispatches to.
-# A NULL athlete_profile.activity_sync_provider is treated as STRAVA (the
-# current default) until F18.6 flips the default to INTERVALS_ICU.
+# A NULL athlete_profile.activity_sync_provider is treated as this default.
+# intervals.icu is the default (F18.6/#95) — Strava is still fully
+# supported, just no longer the un-configured fallback (Strava's paywalled
+# API access was the reason for this PRD in the first place).
 ACTIVITY_SYNC_PROVIDER_CHOICES = ["STRAVA", "INTERVALS_ICU"]
-DEFAULT_ACTIVITY_SYNC_PROVIDER = "STRAVA"
+DEFAULT_ACTIVITY_SYNC_PROVIDER = "INTERVALS_ICU"
 
 # Canonical session-type vocabulary — must match the `today` command's
 # --session-type choices and what the decision/weekly engines expect.

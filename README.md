@@ -41,12 +41,16 @@ See the [PRD](./docs/ApexCoach_PRD_v1.0.md) §3 for the full three-horizon model
 
 ## Running locally
 
+The CLI isn't installed as a console script — invoke it as a module: `python -m apex_coach.cli.main <command>` (shortened to `apex_coach <command>` below for readability).
+
 1. Copy `.env.example` to `.env` and fill in `APEX_ENCRYPTION_KEY` (and provider credentials once you've registered OAuth apps).
 2. `apex_coach init-db` — creates the SQLite schema. Nothing else does this; run it once before any command that touches the database.
 3. `apex_coach connect-whoop` — one-time OAuth handshake (see `docs/adr/0018`).
 4. `apex_coach whoop-smoke --real` — verify the connection.
-5. `apex_coach connect-strava` — one-time OAuth handshake (see `docs/adr/0019`).
-6. `apex_coach strava-smoke --real` — verify the connection.
+5. Connect an activity-sync provider. **intervals.icu is the default** (docs/adr/0025) — Strava's API now requires a paid subscription, which is why intervals.icu replaced it as the un-configured default; Strava is still fully supported if you explicitly select it.
+   - intervals.icu: `apex_coach connect-intervals-icu` — stores your personal API key (Settings > API on intervals.icu). No OAuth handshake needed.
+   - Strava (alternative): `apex_coach connect-strava` — one-time OAuth handshake (see `docs/adr/0019`), then `apex_coach set-athlete-profile --activity-sync-provider STRAVA` to make it the active provider.
+6. `apex_coach sync-session --real ...` — verify the connection by syncing a real activity.
 
 A minimal local-only web UI (FastAPI façade + React) is scaffolded in
 [`web/`](./web/README.md) — see that README for how to run it alongside the

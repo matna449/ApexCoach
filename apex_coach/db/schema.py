@@ -207,9 +207,9 @@ athlete_profile = sa.Table(
         ),
         nullable=True,
     ),
-    # F18.4 (#93): which adapter sync-session dispatches to. Nullable — a
-    # NULL/missing row is treated as STRAVA (current default) until F18.6
-    # flips the default to INTERVALS_ICU (docs/adr/0025, PRD #89).
+    # F18.4/F18.6 (#93/#95): which adapter sync-session dispatches to.
+    # Nullable — a NULL/missing row is treated as the CLI's
+    # DEFAULT_ACTIVITY_SYNC_PROVIDER (INTERVALS_ICU, docs/adr/0025, PRD #89).
     sa.Column(
         "activity_sync_provider",
         sa.Enum(
