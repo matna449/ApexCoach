@@ -20,6 +20,10 @@ import Badge from './Badge'
 // system. The data layer below (types, fetchContext/submitDecision/
 // submitFollowup, and the exact request/response shapes) is UNCHANGED from
 // #85 -- only how it's rendered changes.
+//
+// F19.3 (#106): restyles FollowupChat (below) to continue in that same
+// thread instead of its own separate section -- still purely a render
+// change, same data layer.
 const API_BASE_URL = 'http://localhost:8000'
 
 type DecisionRequestAnswers = { fixedAnswers: Record<string, number>; adaptiveAnswers: Record<string, number> }
@@ -123,10 +127,12 @@ async function submitFollowup(
   return (await res.json()) as FollowupResult
 }
 
-// F19.2 (#105): kept present and functional exactly as #85 built it -- its
-// visual restyle into the unified chat thread is a separate ticket (#106)
-// blocked on this one, per the issue's explicit instruction not to touch
-// its appearance here.
+// F19.3 (#106): continues directly in the same scrolling thread the
+// verdict/explanation render into (DecisionResult below renders this as a
+// plain sibling in its flex-col container, immediately after the
+// explanation ChatBubble) -- no separate "Ask a follow-up" section anymore.
+// The state machine and POST /api/morning/followup call below are
+// byte-for-byte unchanged from #85/F17.3; only the render return changed.
 function FollowupChat({
   decisionContext,
   initialExplanation,
@@ -166,41 +172,46 @@ function FollowupChat({
   }
 
   return (
-    <div data-testid="morning-followup">
-      <h3>Ask a follow-up</h3>
-      <ul>
-        {turns.map((turn, i) => (
-          <li key={i}>
-            <p>
-              <strong>You:</strong> {turn.question}
-            </p>
-            {turn.banner && (
-              <p style={{ color: turn.severity === 'WARN' ? 'orange' : 'inherit' }}>
-                [{turn.severity}] {turn.banner}
-              </p>
-            )}
-            {turn.explanation && (
-              <p data-testid="morning-followup-answer">
-                <strong>Coach:</strong> {turn.explanation}
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
+    <div className="flex flex-col gap-3" data-testid="morning-followup">
+      {turns.map((turn, i) => (
+        <div key={i} className="flex flex-col gap-2">
+          <ChatBubble speaker="athlete">{turn.question}</ChatBubble>
+          {turn.banner && (
+            <div className="flex items-start gap-2" data-testid="morning-followup-banner">
+              <Badge tone={turn.severity === 'WARN' ? 'warn' : 'info'}>{turn.severity}</Badge>
+              <span className="text-sm text-text-primary">{turn.banner}</span>
+            </div>
+          )}
+          {turn.explanation && (
+            <ChatBubble speaker="coach" testId="morning-followup-answer">
+              {turn.explanation}
+            </ChatBubble>
+          )}
+        </div>
+      ))}
+
+      {pending && <TypingIndicator label="Coach is thinking…" />}
+
       {error && (
-        <p style={{ color: 'red' }} data-testid="morning-followup-error">
+        <p className="text-sm text-status-bad" data-testid="morning-followup-error">
           Error: {error}
         </p>
       )}
-      <form onSubmit={handleAsk}>
+
+      <form onSubmit={handleAsk} className="flex gap-2">
         <input
           type="text"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="why? what if I do it anyway?"
           disabled={pending}
+          className="flex-1 rounded-md border border-border bg-surface-card px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none disabled:opacity-50"
         />
-        <button type="submit" disabled={pending}>
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-md border border-border-strong bg-surface-card px-4 py-2 text-sm font-medium text-text-heading transition-colors hover:bg-surface-panel disabled:opacity-50"
+        >
           {pending ? 'Asking…' : 'Ask'}
         </button>
       </form>

@@ -163,6 +163,91 @@ describe('MorningView', () => {
     expect(screen.getByTestId('morning-override')).toHaveTextContent('health_check_override: left_knee_pain = 4')
   })
 
+  it('follow-up chat (F19.3/#106): renders as ChatBubbles inside the same thread, below the verdict', async () => {
+    const context = makeContext()
+    const decision: DecisionResponse = {
+      recommendation: 'GO',
+      rationale: 'Recovery and HRV both look solid this morning.',
+      check_recovery_week_trigger: false,
+      override_triggered: false,
+      override_reasons: [],
+      explanation: 'You are well recovered -- proceed as planned.',
+      banner: null,
+      severity: null,
+      decision_context: { date: '2026-08-01' },
+    }
+    const followupResult = {
+      explanation: 'Because your HRV is a full standard deviation above baseline.',
+      banner: null,
+      severity: null,
+    }
+
+    // The follow-up request is held open deliberately so the test can
+    // observe the TypingIndicator mid-flight, then release it -- a mock
+    // that resolves immediately would race the assertion below.
+    let resolveFollowup: (res: Response) => void = () => {}
+    const followupPromise = new Promise<Response>((resolve) => {
+      resolveFollowup = resolve
+    })
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/morning/followup')) return followupPromise
+      if (url.includes('/api/morning/decision')) return jsonResponse(200, decision)
+      if (url.includes('/api/morning/context')) return jsonResponse(200, context)
+      throw new Error(`unexpected fetch: ${url} ${init?.method ?? ''}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const user = userEvent.setup()
+    render(<MorningView />)
+
+    await answerAllQuestions(user)
+    await user.click(await screen.findByTestId('confirm-decision'))
+    await waitFor(() => expect(screen.getByTestId('verdict-stamp')).toHaveTextContent('GO'))
+
+    // The follow-up thread lives inside the same container the verdict
+    // renders into (morning-decision), immediately below it -- not a
+    // separate section of the page.
+    const decisionContainer = screen.getByTestId('morning-decision')
+    const followup = screen.getByTestId('morning-followup')
+    expect(decisionContainer).toContainElement(followup)
+    const children = Array.from(decisionContainer.children)
+    expect(children.indexOf(screen.getByTestId('verdict-stamp'))).toBeLessThan(children.indexOf(followup))
+
+    // Submitting an empty question ends the loop cleanly -- no fetch, no turn.
+    await user.click(screen.getByRole('button', { name: 'Ask' }))
+    expect(fetchMock.mock.calls.some(([url]) => (url as string).includes('/api/morning/followup'))).toBe(false)
+
+    // Asking a real question: typing indicator shows while the request is
+    // in flight (turns only update once the response resolves, matching
+    // #85's unchanged state machine), then the athlete question and coach
+    // answer both land as ChatBubbles in the thread.
+    const input = screen.getByPlaceholderText('why? what if I do it anyway?')
+    await user.type(input, 'why not go harder today?')
+    await user.click(screen.getByRole('button', { name: 'Ask' }))
+
+    expect(await screen.findByTestId('typing-indicator')).toBeInTheDocument()
+
+    resolveFollowup(jsonResponse(200, followupResult))
+    await waitForElementToBeRemoved(() => screen.queryByTestId('typing-indicator'))
+
+    expect(followup).toHaveTextContent('why not go harder today?')
+    expect(screen.getByTestId('morning-followup-answer')).toHaveTextContent(followupResult.explanation)
+
+    const followupCall = fetchMock.mock.calls.find(([url]) => (url as string).includes('/api/morning/followup'))
+    expect(followupCall).toBeDefined()
+    const [, init] = followupCall!
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init!.body as string)).toEqual({
+      decision_context: decision.decision_context,
+      prior_explanation: decision.explanation,
+      question: 'why not go harder today?',
+    })
+
+    // Input clears after a successful ask, ready for the next question.
+    expect(input).toHaveValue('')
+  })
+
   it('degraded-Ollama banner: renders the WARN badge with unchanged banner content, no followup', async () => {
     const context = makeContext()
     const decision: DecisionResponse = {
