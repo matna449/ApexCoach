@@ -8,6 +8,10 @@ import click
 
 from apex_coach.adapters.errors import AdapterError
 from apex_coach.adapters.ollama_adapter import MockOllamaAdapter, RealOllamaAdapter
+from apex_coach.adapters.intervals_icu_adapter import (
+    MockIntervalsIcuAdapter,
+    RealIntervalsIcuAdapter,
+)
 from apex_coach.adapters.strava_adapter import (
     MockStravaAdapter,
     RealStravaAdapter,
@@ -62,6 +66,12 @@ PERIODISATION_PHASES = ["BASE", "BUILD", "PEAK", "TAPER", "RECOVERY"]
 # constant is only calibrated for these two categories in the source
 # research.
 ATHLETE_SEX_CHOICES = ["MALE", "FEMALE"]
+
+# docs/adr/0025 (PRD #89) — which adapter sync-session dispatches to.
+# A NULL athlete_profile.activity_sync_provider is treated as STRAVA (the
+# current default) until F18.6 flips the default to INTERVALS_ICU.
+ACTIVITY_SYNC_PROVIDER_CHOICES = ["STRAVA", "INTERVALS_ICU"]
+DEFAULT_ACTIVITY_SYNC_PROVIDER = "STRAVA"
 
 # Canonical session-type vocabulary — must match the `today` command's
 # --session-type choices and what the decision/weekly engines expect.
@@ -194,6 +204,35 @@ def connect_strava():
         scope=tokens.get("scope", ""),
     )
     click.echo("Strava connected. Token stored — run `strava-smoke --real` to verify.")
+
+
+@cli.command(name="connect-intervals-icu")
+@click.option(
+    "--api-key",
+    prompt=True,
+    hide_input=True,
+    help="Personal API key from intervals.icu Settings > API. Prompted "
+    "interactively (hidden input) if omitted.",
+)
+def connect_intervals_icu(api_key: str):
+    """Store an intervals.icu personal API key (docs/adr/0025 §1). No OAuth
+    handshake — this is a static, long-lived credential, encrypted at rest
+    via the same TokenRepository WHOOP/Strava tokens use."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    token_repo.save_token(
+        provider="INTERVALS_ICU",
+        access_token=api_key,
+        refresh_token="",
+        expires_at="",
+        scope="",
+    )
+    click.echo(
+        "intervals.icu connected. API key stored — run "
+        "`set-athlete-profile --activity-sync-provider INTERVALS_ICU` to make it "
+        "sync-session's active provider."
+    )
 
 
 @cli.command(name="whoop-smoke")
@@ -383,6 +422,32 @@ def today(
         click.echo("[Flag: check_recovery_week_trigger]")
 
 
+def _build_activity_sync_adapter(engine, settings, profile: dict | None, real: bool):
+    """Dispatches to Strava or intervals.icu based on
+    athlete_profile.activity_sync_provider (docs/adr/0025, PRD #89) — same
+    selection logic for both mock and real modes, so `sync-session`
+    (without --real) demos against whichever provider is configured."""
+    provider = (profile or {}).get("activity_sync_provider") or DEFAULT_ACTIVITY_SYNC_PROVIDER
+
+    if not real:
+        return MockStravaAdapter() if provider == "STRAVA" else MockIntervalsIcuAdapter()
+
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    if provider == "STRAVA":
+        if not settings.strava_client_id or not settings.strava_client_secret:
+            raise click.ClickException("STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env.")
+        return RealStravaAdapter(
+            token_repo, settings.strava_client_id, settings.strava_client_secret
+        )
+
+    token = token_repo.get_token("INTERVALS_ICU")
+    if token is None:
+        raise click.ClickException(
+            "No intervals.icu API key stored — run `connect-intervals-icu` first."
+        )
+    return RealIntervalsIcuAdapter(token["access_token"])
+
+
 @cli.command(name="sync-session")
 @click.option(
     "--session-type",
@@ -433,7 +498,11 @@ def today(
     help="Athlete's RPE (1-10) for this session. Prompted interactively if omitted.",
 )
 @click.option(
-    "--real", is_flag=True, default=False, help="Use RealStravaAdapter instead of the mock."
+    "--real",
+    is_flag=True,
+    default=False,
+    help="Use the real adapter (Strava or intervals.icu, per athlete_profile."
+    "activity_sync_provider) instead of the mock.",
 )
 def sync_session(
     session_type: str,
@@ -444,10 +513,11 @@ def sync_session(
     rpe: int | None,
     real: bool,
 ):
-    """Close the loop after a real session: fetch new Strava activities,
-    let the athlete pick one, compute load_score, prompt for RPE, score
-    execution against zone boundaries, and persist both the activity and
-    the session score.
+    """Close the loop after a real session: fetch new activities from the
+    configured provider (Strava or intervals.icu, docs/adr/0025), let the
+    athlete pick one, compute load_score, prompt for RPE, score execution
+    against zone boundaries, and persist both the activity and the session
+    score.
 
     Re-running against an activity that was already synced upserts the
     activity row (matched on strava_id) rather than erroring, and appends
@@ -471,15 +541,7 @@ def sync_session(
             "pass the flags, or run `set-athlete-profile` first."
         )
 
-    if real:
-        if not settings.strava_client_id or not settings.strava_client_secret:
-            raise click.ClickException("STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env.")
-        token_repo = TokenRepository(engine, settings.apex_encryption_key)
-        adapter = RealStravaAdapter(
-            token_repo, settings.strava_client_id, settings.strava_client_secret
-        )
-    else:
-        adapter = MockStravaAdapter()
+    adapter = _build_activity_sync_adapter(engine, settings, profile, real)
 
     try:
         candidates = adapter.get_new_activities(since_ts)
@@ -487,7 +549,7 @@ def sync_session(
         raise click.ClickException(str(e)) from e
 
     if not candidates:
-        click.echo("No new Strava activities to sync.")
+        click.echo("No new activities to sync.")
         return
 
     if len(candidates) == 1:
@@ -767,14 +829,28 @@ def set_monthly_target(
 )
 @click.option("--sex", type=click.Choice(ATHLETE_SEX_CHOICES), help="Feeds TRIMP's exponential weighting constant.")
 @click.option(
+    "--activity-sync-provider",
+    type=click.Choice(ACTIVITY_SYNC_PROVIDER_CHOICES),
+    help=(
+        "Which adapter `sync-session --real` dispatches to (docs/adr/0025). "
+        "Defaults to STRAVA if never set. Run `connect-intervals-icu` first "
+        "if switching to INTERVALS_ICU."
+    ),
+)
+@click.option(
     "--show", is_flag=True, default=False, help="Print the currently stored profile instead of writing."
 )
 def set_athlete_profile(
-    max_hr: int | None, baseline_resting_hr: int | None, sex: str | None, show: bool
+    max_hr: int | None,
+    baseline_resting_hr: int | None,
+    sex: str | None,
+    activity_sync_provider: str | None,
+    show: bool,
 ):
     """Set (or view) the athlete's profile: max HR, a fallback resting HR,
-    and sex (docs/adr/0024). Single global row — this is a single-user
-    system (docs/adr/0023). Writes via PlanRepository.insert_athlete_profile()
+    sex (docs/adr/0024), and the active activity-sync provider
+    (docs/adr/0025). Single global row — this is a single-user system
+    (docs/adr/0023). Writes via PlanRepository.insert_athlete_profile()
     on first write, update_athlete_profile() thereafter."""
     settings = get_settings()
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
@@ -788,6 +864,10 @@ def set_athlete_profile(
         click.echo(f"Max HR: {profile['max_hr']}")
         click.echo(f"Baseline resting HR: {profile['baseline_resting_hr']}")
         click.echo(f"Sex: {profile['sex']}")
+        click.echo(
+            f"Activity sync provider: "
+            f"{profile['activity_sync_provider'] or DEFAULT_ACTIVITY_SYNC_PROVIDER}"
+        )
         return
 
     existing = repo.get_athlete_profile()
@@ -799,6 +879,11 @@ def set_athlete_profile(
             else (existing or {}).get("baseline_resting_hr")
         ),
         "sex": sex if sex is not None else (existing or {}).get("sex"),
+        "activity_sync_provider": (
+            activity_sync_provider
+            if activity_sync_provider is not None
+            else (existing or {}).get("activity_sync_provider")
+        ),
     }
 
     if existing is None:

@@ -207,6 +207,20 @@ athlete_profile = sa.Table(
         ),
         nullable=True,
     ),
+    # F18.4 (#93): which adapter sync-session dispatches to. Nullable — a
+    # NULL/missing row is treated as STRAVA (current default) until F18.6
+    # flips the default to INTERVALS_ICU (docs/adr/0025, PRD #89).
+    sa.Column(
+        "activity_sync_provider",
+        sa.Enum(
+            "STRAVA",
+            "INTERVALS_ICU",
+            name="activity_sync_provider",
+            native_enum=False,
+            create_constraint=True,
+        ),
+        nullable=True,
+    ),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
     sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
 )
@@ -222,6 +236,7 @@ oauth_tokens = sa.Table(
         sa.Enum(
             "WHOOP",
             "STRAVA",
+            "INTERVALS_ICU",
             name="oauth_provider",
             native_enum=False,
             create_constraint=True,
