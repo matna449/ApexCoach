@@ -125,7 +125,8 @@ def test_set_athlete_profile_stores_activity_sync_provider(tmp_path):
     assert "Activity sync provider: INTERVALS_ICU" in show.output
 
 
-def test_set_athlete_profile_show_defaults_provider_to_strava_when_unset(tmp_path):
+def test_set_athlete_profile_show_defaults_provider_to_intervals_icu_when_unset(tmp_path):
+    """F18.6/#95 — the un-configured default is INTERVALS_ICU, not STRAVA."""
     db_path = tmp_path / "test.db"
     runner = CliRunner()
     _init_db(runner, db_path)
@@ -135,7 +136,7 @@ def test_set_athlete_profile_show_defaults_provider_to_strava_when_unset(tmp_pat
         show = runner.invoke(cli, ["set-athlete-profile", "--show"])
 
     assert show.exit_code == 0, show.output
-    assert "Activity sync provider: STRAVA" in show.output
+    assert "Activity sync provider: INTERVALS_ICU" in show.output
 
 
 def test_set_athlete_profile_rejects_invalid_activity_sync_provider(tmp_path):
