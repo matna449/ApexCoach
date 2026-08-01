@@ -2,18 +2,21 @@ import { useEffect, useState } from 'react'
 import ExecutionScoreTrendChart from './ExecutionScoreTrendChart'
 import LoadActualVsTargetChart from './LoadActualVsTargetChart'
 import HrvTrendChart from './HrvTrendChart'
+import MorningView from './MorningView'
 
-// F16.1 scaffolding: prove the FastAPI <-> React round trip works, nothing
-// more. Fetches the backend directly (backend CORS in web/backend/main.py
-// allows this dev server's origin, http://localhost:5173). Later tickets
-// (#68/#69/#70) replace this with real trend-chart screens.
+// F17.1 (#83): morning becomes the primary screen; the F16.2/3/4 trend
+// charts move to a secondary "History" view. No router library — a local
+// view/tab state is enough for a two-screen, single-user local app
+// (docs/adr/0023), and keeps the dependency footprint unchanged.
 const API_BASE_URL = 'http://localhost:8000'
 
 type HealthResponse = {
   status: string
 }
 
-function App() {
+type View = 'morning' | 'history'
+
+function HistoryView() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,8 +35,7 @@ function App() {
   }, [])
 
   return (
-    <main>
-      <h1>ApexCoach</h1>
+    <>
       <h2>Backend health check</h2>
       {error && <p style={{ color: 'red' }}>Error: {error}</p>}
       {!error && !health && <p>Loading…</p>}
@@ -43,6 +45,34 @@ function App() {
       <ExecutionScoreTrendChart />
       <LoadActualVsTargetChart />
       <HrvTrendChart />
+    </>
+  )
+}
+
+function App() {
+  const [view, setView] = useState<View>('morning')
+
+  return (
+    <main>
+      <h1>ApexCoach</h1>
+      <nav>
+        <button
+          type="button"
+          onClick={() => setView('morning')}
+          aria-current={view === 'morning'}
+        >
+          Morning
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('history')}
+          aria-current={view === 'history'}
+        >
+          History
+        </button>
+      </nav>
+      {view === 'morning' && <MorningView />}
+      {view === 'history' && <HistoryView />}
     </main>
   )
 }
