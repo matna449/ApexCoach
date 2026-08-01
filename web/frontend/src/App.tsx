@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import LoadActualVsTargetChart from './LoadActualVsTargetChart'
 import HrvTrendChart from './HrvTrendChart'
 
 // F16.1 scaffolding: prove the FastAPI <-> React round trip works, nothing
@@ -38,6 +39,7 @@ function App() {
       {health && (
         <pre data-testid="health-response">{JSON.stringify(health, null, 2)}</pre>
       )}
+      <LoadActualVsTargetChart />
       <HrvTrendChart />
     </main>
   )
