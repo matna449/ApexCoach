@@ -24,3 +24,10 @@ def calculate_zones(max_hr: int, resting_hr: int) -> dict[str, tuple[int, int]]:
         "zone4": (resting_hr + round(0.80 * hrr), resting_hr + round(0.90 * hrr)),
         "zone5": (resting_hr + round(0.90 * hrr), max_hr),
     }
+
+
+def zone_midpoint(zone_bounds: tuple[int, int]) -> float:
+    """Representative HR for a zone — used by F19.2's structure generator
+    as the fixed avg_hr fed into TRIMP-inversion (grill-me Q8)."""
+    lower, upper = zone_bounds
+    return (lower + upper) / 2

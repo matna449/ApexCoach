@@ -1,6 +1,6 @@
 import pytest
 
-from apex_coach.services.zone_calculator import calculate_zones
+from apex_coach.services.zone_calculator import calculate_zones, zone_midpoint
 
 
 @pytest.mark.parametrize(
@@ -46,3 +46,8 @@ def test_calculate_zones_rejects_resting_hr_at_or_above_max_hr():
 
     with pytest.raises(ValueError):
         calculate_zones(max_hr=150, resting_hr=160)
+
+
+def test_zone_midpoint_is_average_of_bounds():
+    assert zone_midpoint((134, 148)) == 141.0
+    assert zone_midpoint((162, 176)) == 169.0

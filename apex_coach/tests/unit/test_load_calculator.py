@@ -5,6 +5,7 @@ from apex_coach.services.load_calculator import (
     calculate_load_au,
     calculate_recovery_load,
     calculate_rpe_based_load,
+    invert_duration_for_target_load,
 )
 
 # duration=60, avg_hr=150, resting=50, max_hr=190 -> delta_hr_ratio = 100/140
@@ -81,3 +82,30 @@ def test_calculate_load_au_requires_rpe_for_rpe_based():
 def test_calculate_load_au_rejects_unknown_activity_type():
     with pytest.raises(ValueError):
         calculate_load_au("Kayaking", 60)
+
+
+# F19.2 (#118): invert_duration_for_target_load is the algebraic inverse of
+# calculate_hr_based_load, solved for duration given a fixed avg_hr. Reuses
+# the exact worked example above (duration=60, avg_hr=150, resting=50,
+# max_hr=190) in reverse: feeding MALE_TRIMP/FEMALE_TRIMP back in as the
+# target_au should recover duration=60.
+
+
+def test_invert_duration_for_target_load_is_inverse_of_hr_based_load_male():
+    assert invert_duration_for_target_load(MALE_TRIMP, 150, 50, 190, "MALE") == pytest.approx(60.0)
+
+
+def test_invert_duration_for_target_load_is_inverse_of_hr_based_load_female():
+    assert invert_duration_for_target_load(FEMALE_TRIMP, 150, 50, 190, "FEMALE") == pytest.approx(
+        60.0
+    )
+
+
+def test_invert_duration_for_target_load_rejects_unknown_sex():
+    with pytest.raises(ValueError):
+        invert_duration_for_target_load(100.0, 150, 50, 190, "OTHER")
+
+
+def test_invert_duration_for_target_load_rejects_max_hr_not_greater_than_resting_hr():
+    with pytest.raises(ValueError):
+        invert_duration_for_target_load(100.0, 150, 190, 190, "MALE")

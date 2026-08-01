@@ -34,6 +34,7 @@ from apex_coach.engines.monthly_engine import (
     load_au_for_activity,
     run_monthly_review,
 )
+from apex_coach.engines.structure_generator import generate_week_structure
 from apex_coach.engines.weekly_engine import run_weekly_adaptation
 from apex_coach.orchestrator.orchestrator import (
     HRVDeltaBand,
@@ -744,6 +745,90 @@ def plan_week(
     click.echo(f"Plan saved for week starting {week_start}:")
     for entry in planned_sessions:
         click.echo(f"  {entry['day']}: {entry['session_type']}")
+
+
+@cli.command(name="generate-week-structure")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+def generate_week_structure_command(week_start: str):
+    """Generate (once) and print the structured HR-zone breakdown for an
+    already-planned week — PRD #111, F19.2.
+
+    Persists to weekly_plans.generated_structure_json. If a week already has
+    a generated structure, prints it as-is without recomputing — explicit
+    regeneration is F19.3's job, not this command's.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None:
+        raise click.ClickException(f"no weekly plan stored for week_start_date {week_start!r}")
+
+    if week.get("generated_structure_json"):
+        structured = json.loads(week["generated_structure_json"])
+        click.echo(f"Structure already generated for week starting {week_start}:")
+        _print_week_structure(structured)
+        return
+
+    planned_sessions = json.loads(week["planned_sessions_json"] or "[]")
+    if not planned_sessions:
+        raise click.ClickException(f"no sessions planned for week_start_date {week_start!r}")
+
+    profile = plan_repo.get_athlete_profile()
+    if not profile or profile.get("max_hr") is None or profile.get("baseline_resting_hr") is None or not profile.get("sex"):
+        raise click.ClickException(
+            "athlete profile with max_hr, baseline_resting_hr, and sex required — "
+            "run `set-athlete-profile` first."
+        )
+
+    week_start_date = _date.fromisoformat(week_start)
+    month = plan_repo.get_monthly_target(week_start_date.replace(day=1).isoformat())
+    weekly_load_target = (
+        calculate_weekly_target(month["load_target_total"])
+        if month and month.get("load_target_total")
+        else 0.0
+    )
+    periodisation_phase = (month or {}).get("periodisation_phase") or "BASE"
+
+    structured = generate_week_structure(
+        planned_sessions,
+        weekly_load_target,
+        periodisation_phase,
+        max_hr=profile["max_hr"],
+        resting_hr=profile["baseline_resting_hr"],
+        sex=profile["sex"],
+    )
+    plan_repo.update_weekly_plan(week_start, generated_structure_json=json.dumps(structured))
+
+    click.echo(f"Structure generated for week starting {week_start}:")
+    _print_week_structure(structured)
+
+
+def _print_week_structure(structured: list[dict]) -> None:
+    for entry in structured:
+        s = entry["structure"]
+        if s["type"] == "intervals":
+            click.echo(
+                f"  {entry['day']}: {entry['session_type']} — "
+                f"{s['rep_count']}x({s['work_min']:.0f}min@{s['work_zone']}/"
+                f"{s['recovery_min']:.0f}min@{s['recovery_zone']}) "
+                f"+{s['warmup_cooldown_min']:.0f}min warmup/cooldown "
+                f"({s['total_duration_min']:.0f}min total)"
+            )
+        elif s["type"] == "single_block" and "zone" in s and "main_set_min" in s:
+            click.echo(
+                f"  {entry['day']}: {entry['session_type']} — "
+                f"{s['main_set_min']:.0f}min@{s['zone']} "
+                f"+{s['warmup_cooldown_min']:.0f}min warmup/cooldown "
+                f"({s['total_duration_min']:.0f}min total)"
+            )
+        else:
+            click.echo(f"  {entry['day']}: {entry['session_type']} — {s['duration_min']:.0f}min")
 
 
 @cli.command(name="set-monthly-target")
