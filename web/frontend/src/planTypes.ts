@@ -83,3 +83,29 @@ export type MonthPlanResponse = {
   month: string
   weeks: Omit<WeekPlanResponse, 'activity_sync_provider'>[]
 }
+
+// F19.8 (#137): types for GET/POST /api/plan/month/target
+// (web/backend/main.py). Mirrors apex_coach.db.schema's monthly_targets
+// enum verbatim -- the set of phases a training block can be in.
+export type PeriodisationPhase = 'BASE' | 'BUILD' | 'PEAK' | 'TAPER' | 'RECOVERY'
+
+export type MonthlyTargetResponse = {
+  month_start_date: string
+  // False when no monthly_targets row exists yet for this month -- the
+  // other fields are all null in that case, same shape as the CLI's `--show`
+  // "No monthly target stored" case.
+  exists: boolean
+  periodisation_phase: PeriodisationPhase | null
+  load_target_total: number | null
+  race_date: string | null
+}
+
+export type SetMonthlyTargetResponse = {
+  month_start_date: string
+  // True if this write created the row (first target set for this month),
+  // false if it updated an existing one.
+  created: boolean
+  periodisation_phase: PeriodisationPhase
+  load_target_total: number
+  race_date: string | null
+}

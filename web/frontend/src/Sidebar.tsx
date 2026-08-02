@@ -8,13 +8,19 @@ import { useTheme } from './useTheme'
 //
 // F19.5 (#120): adds the 'month' view alongside 'plan' (the week view) --
 // the athlete can jump between the week and month calendar previews.
-export type View = 'morning' | 'history' | 'plan' | 'month'
+//
+// F19.8 (#137): adds 'target' -- the monthly target (phase/load-target/
+// race-date) that drives week generation is an input, like Morning, so it
+// gets its own tab rather than living inside the read-only Month calendar
+// preview.
+export type View = 'morning' | 'history' | 'plan' | 'month' | 'target'
 
 const NAV_ITEMS: { key: View; label: string }[] = [
   { key: 'morning', label: 'Morning' },
   { key: 'history', label: 'History' },
   { key: 'plan', label: 'Plan' },
   { key: 'month', label: 'Month' },
+  { key: 'target', label: 'Target' },
 ]
 
 function Sidebar({
