@@ -15,6 +15,7 @@ Config is loaded the exact same way the CLI loads it — see
 handlers added by later tickets should follow that same pattern.
 """
 
+import json
 from datetime import date, datetime, timezone, timedelta
 from types import SimpleNamespace
 
@@ -359,6 +360,55 @@ def execution_score_trend(
         "overpush_count": overpush_count,
         "underpush_count": underpush_count,
     }
+
+
+# -- F19.4: web calendar week view (read-only preview, #119) ----------------
+#
+# Reuses PlanRepository.get_weekly_plan() to read weekly_plans.
+# generated_structure_json — the same JSON already produced+persisted by
+# F19.2's `generate-week-structure` CLI command (apex_coach.cli.main
+# generate_week_structure_command / engines.structure_generator.
+# generate_week_structure()). This endpoint only *reads* the persisted
+# structure; it never calls the generator itself (docs/adr/0023 — no
+# duplicated business logic, mirrors `_print_week_structure`'s reading
+# logic). Every session is reported as `pushed: false` — push status only
+# becomes meaningful once F19.7 (#123) wires a push button up to
+# weekly_plans.pushed_event_ids_json; reading that column here would be
+# premature per #119's acceptance criteria.
+
+
+@app.get("/api/plan/week")
+def plan_week(
+    week_start: str = Query(
+        ..., description="ISO 8601 date (YYYY-MM-DD) for the Monday this week starts on."
+    ),
+) -> dict:
+    try:
+        date.fromisoformat(week_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid date: {week_start!r}")
+
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no weekly plan stored for week_start_date {week_start!r}",
+        )
+
+    if not week.get("generated_structure_json"):
+        return {"week_start_date": week_start, "generated": False, "days": []}
+
+    structured = json.loads(week["generated_structure_json"])
+    days = [
+        {
+            "day": entry["day"],
+            "session_type": entry["session_type"],
+            "structure": entry["structure"],
+            "pushed": False,
+        }
+        for entry in structured
+    ]
+    return {"week_start_date": week_start, "generated": True, "days": days}
 
 
 # -- F16.3: load actual vs. target (weekly + monthly) -----------------------
