@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import Badge from './Badge'
-import type { PlanDay, SessionStructure, WeekPlanResponse } from './planTypes'
+import type { PlanDay, PushWeekResponse, SessionStructure, WeekPlanResponse } from './planTypes'
 
 // F19.4 (#119): replaces F19.5's (#108) intentional placeholder -- an
 // honest empty calendar shape with no network call -- with the real
@@ -8,9 +8,18 @@ import type { PlanDay, SessionStructure, WeekPlanResponse } from './planTypes'
 // backend endpoint exist. Fetches GET /api/plan/week (web/backend/main.py),
 // which itself only *reads* weekly_plans.generated_structure_json -- the
 // same JSON the CLI's `generate-week-structure` command persists
-// (docs/adr/0023, no duplicated business logic). Every session renders as
-// "Not pushed": push status only becomes meaningful once F19.7 (#123) wires
-// a push button up to weekly_plans.pushed_event_ids_json.
+// (docs/adr/0023, no duplicated business logic).
+//
+// F19.7 (#123): each day's Pushed/Draft badge now reflects real push
+// status (weekly_plans.pushed_event_ids_json via GET /api/plan/week's
+// `pushed` field), and an explicit "Push to intervals.icu" button POSTs to
+// /api/plan/week/push (also web/backend/main.py), which itself dispatches
+// through `_push_week()` in apex_coach.cli.main -- the same push logic the
+// `push-week` CLI command uses (F19.6, #121). No push logic is
+// reimplemented here or in the backend endpoint. The button is hidden
+// (replaced by an explanatory message) when the athlete's configured
+// activity_sync_provider is STRAVA, since pushing a plan to a calendar is
+// intervals.icu-only (docs/adr/0027).
 const API_BASE_URL = 'http://localhost:8000'
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
@@ -130,8 +139,8 @@ function DayCard({ dayName, dateIso, planDay }: { dayName: string; dateIso: stri
             >
               {planDay.session_type}
             </span>
-            <Badge tone="info" testId={`plan-day-pushed-${dayName}`}>
-              {planDay.pushed ? 'Pushed' : 'Not pushed'}
+            <Badge tone={planDay.pushed ? 'good' : 'info'} testId={`plan-day-pushed-${dayName}`}>
+              {planDay.pushed ? 'Pushed' : 'Draft'}
             </Badge>
           </div>
 
@@ -191,7 +200,18 @@ async function fetchWeekPlan(weekStart: string): Promise<LoadState> {
     // No weekly_plans row for this week yet -- render the same "nothing
     // generated" empty state a week with no structure gets, rather than a
     // hard error (the athlete hasn't planned this week, that's expected).
-    return { kind: 'loaded', plan: { week_start_date: weekStart, generated: false, days: [] } }
+    // activity_sync_provider is irrelevant here (no push button renders
+    // when generated is false) -- INTERVALS_ICU is just the same default
+    // the backend itself falls back to for a NULL athlete_profile row.
+    return {
+      kind: 'loaded',
+      plan: {
+        week_start_date: weekStart,
+        generated: false,
+        days: [],
+        activity_sync_provider: 'INTERVALS_ICU',
+      },
+    }
   }
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
@@ -205,22 +225,99 @@ async function fetchWeekPlan(weekStart: string): Promise<LoadState> {
   return { kind: 'loaded', plan }
 }
 
+type PushState =
+  | { kind: 'idle' }
+  | { kind: 'pushing' }
+  | { kind: 'error'; message: string }
+
+async function postPushWeek(weekStart: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE_URL}/api/plan/week/push?week_start=${weekStart}`, {
+      method: 'POST',
+    })
+  } catch (err: unknown) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { detail?: unknown } | null
+    const detail = body?.detail
+    return {
+      ok: false,
+      message: typeof detail === 'string' ? detail : `POST /api/plan/week/push returned ${res.status}`,
+    }
+  }
+  // Response body (PushWeekResponse) isn't needed here -- re-fetching the
+  // week plan below is the single source of truth for per-day pushed
+  // status, so the frontend never has two places that could disagree about
+  // it.
+  await (res.json() as Promise<PushWeekResponse>).catch(() => undefined)
+  return { ok: true }
+}
+
 function PlanView() {
   const weekStart = toIsoDate(mondayOf(new Date()))
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
+  const [pushState, setPushState] = useState<PushState>({ kind: 'idle' })
 
-  useEffect(() => {
+  const loadPlan = () => {
     setState({ kind: 'loading' })
     fetchWeekPlan(weekStart).then(setState)
+  }
+
+  useEffect(() => {
+    loadPlan()
     // weekStart is stable for the component's lifetime; run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  async function handlePush() {
+    setPushState({ kind: 'pushing' })
+    const result = await postPushWeek(weekStart)
+    if (result.ok) {
+      setPushState({ kind: 'idle' })
+      loadPlan() // refresh so each day's Pushed/Draft badge reflects the push
+    } else {
+      setPushState({ kind: 'error', message: result.message })
+    }
+  }
+
+  const plan = state.kind === 'loaded' ? state.plan : null
+  const isStrava = plan?.activity_sync_provider === 'STRAVA'
+
   return (
     <div className="p-6" data-testid="plan-view">
-      <h2 className="text-lg font-semibold" data-testid="plan-week-heading">
-        Week of {weekStart}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold" data-testid="plan-week-heading">
+          Week of {weekStart}
+        </h2>
+
+        {plan !== null && plan.generated && (
+          <div className="flex items-center gap-3">
+            {isStrava ? (
+              <p className="text-sm text-text-muted" data-testid="push-disabled-strava">
+                Push to intervals.icu is unavailable — the configured provider is Strava.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePush}
+                disabled={pushState.kind === 'pushing'}
+                className="rounded-md border border-border-strong bg-surface-card px-4 py-2 text-sm font-medium text-text-heading transition-colors hover:bg-surface-panel disabled:opacity-50"
+                data-testid="push-week-button"
+              >
+                {pushState.kind === 'pushing' ? 'Pushing…' : 'Push to intervals.icu'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {pushState.kind === 'error' && (
+        <p className="mt-1 text-sm text-status-bad" data-testid="push-error">
+          Push failed: {pushState.message}
+        </p>
+      )}
 
       {state.kind === 'loading' && (
         <p className="mt-1 text-sm text-text-muted" data-testid="plan-loading">

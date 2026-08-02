@@ -908,30 +908,28 @@ def _print_week_structure(structured: list[dict]) -> None:
             click.echo(f"  {entry['day']}: {entry['session_type']} — {s['duration_min']:.0f}min")
 
 
-@cli.command(name="push-week")
-@click.option(
-    "--week-start",
-    required=True,
-    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
-)
-@click.option(
-    "--real",
-    is_flag=True,
-    default=False,
-    help="Push to the real intervals.icu API instead of the mock adapter.",
-)
-def push_week(week_start: str, real: bool):
+def _push_week(
+    plan_repo: PlanRepository, engine, settings, week_start: str, real: bool
+) -> tuple[list[dict], dict[str, str]]:
     """Push a week's generated structured plan to intervals.icu as calendar
-    events — PRD #111, F19.6.
+    events — the actual push logic shared by the `push-week` CLI command
+    (F19.6, #121) below and `POST /api/plan/week/push`
+    (web/backend/main.py, F19.7, #123) so there's exactly one implementation
+    of "push a week" (docs/adr/0023).
 
     One event per day. First push creates; re-pushing the same day updates
     the existing event in place (tracked via weekly_plans.pushed_event_ids_json),
     not a duplicate.
-    """
-    settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
-    plan_repo = PlanRepository(engine)
 
+    Raises click.ClickException for any input/provider error (no stored
+    plan, no generated structure, non-intervals.icu provider, no stored API
+    key) or adapter failure — callers decide how to surface that (the CLI
+    command lets it propagate and exit non-zero; the web endpoint catches it
+    and maps it to an HTTP error).
+
+    Returns (structured_sessions, updated_event_ids) — the caller reports
+    per-day results from these rather than re-reading the row itself.
+    """
     week = plan_repo.get_weekly_plan(week_start)
     if week is None:
         raise click.ClickException(f"no weekly plan stored for week_start_date {week_start!r}")
@@ -959,9 +957,41 @@ def push_week(week_start: str, real: bool):
         except AdapterError as e:
             raise click.ClickException(str(e)) from e
         updated_event_ids[day] = event_id
-        click.echo(f"  {day}: pushed (event {event_id})")
 
     plan_repo.update_weekly_plan(week_start, pushed_event_ids_json=json.dumps(updated_event_ids))
+    return structured_sessions, updated_event_ids
+
+
+@cli.command(name="push-week")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+@click.option(
+    "--real",
+    is_flag=True,
+    default=False,
+    help="Push to the real intervals.icu API instead of the mock adapter.",
+)
+def push_week(week_start: str, real: bool):
+    """Push a week's generated structured plan to intervals.icu as calendar
+    events — PRD #111, F19.6.
+
+    One event per day. First push creates; re-pushing the same day updates
+    the existing event in place (tracked via weekly_plans.pushed_event_ids_json),
+    not a duplicate.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    structured_sessions, updated_event_ids = _push_week(plan_repo, engine, settings, week_start, real)
+
+    for session in structured_sessions:
+        day = session["day"]
+        click.echo(f"  {day}: pushed (event {updated_event_ids[day]})")
+
     click.echo(f"Pushed {len(structured_sessions)} sessions for week starting {week_start}.")
 
 

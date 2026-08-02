@@ -44,23 +44,42 @@ export type PlanDay = {
   day: string
   session_type: string
   structure: SessionStructure
-  // Always false for now -- push status becomes meaningful once F19.7
-  // (#123) wires a push button up to weekly_plans.pushed_event_ids_json.
+  // F19.7 (#123): true once this day has an event id in
+  // weekly_plans.pushed_event_ids_json (pushed to intervals.icu), false for
+  // a local-only draft that hasn't been pushed (or re-pushed since
+  // regeneration) yet.
   pushed: boolean
 }
+
+// F19.7 (#123): resolved the same way apex_coach.cli.main's
+// `_build_plan_export_adapter` resolves it -- a NULL athlete_profile row
+// defaults to 'INTERVALS_ICU'. Pushing a plan to a calendar is
+// intervals.icu-only (docs/adr/0027); the frontend uses this to
+// disable/hide the push button for STRAVA athletes.
+export type ActivitySyncProvider = 'STRAVA' | 'INTERVALS_ICU'
 
 export type WeekPlanResponse = {
   week_start_date: string
   generated: boolean
   days: PlanDay[]
+  activity_sync_provider: ActivitySyncProvider
+}
+
+// F19.7 (#123): POST /api/plan/week/push response shape.
+export type PushWeekResponse = {
+  week_start_date: string
+  pushed_days: { day: string; event_id: string }[]
 }
 
 // F19.5 (#120): type for GET /api/plan/month (web/backend/main.py). One
-// entry per week overlapping the selected calendar month, in the exact same
-// shape WeekPlanResponse already uses -- the month view renders each entry
-// with F19.4's own WeekGrid (PlanView.tsx) rather than a parallel
-// per-day/per-session rendering.
+// entry per week overlapping the selected calendar month, rendered with
+// F19.4's own WeekGrid (PlanView.tsx) rather than a parallel
+// per-day/per-session rendering. `_week_view_payload` (the month endpoint's
+// per-week helper) doesn't resolve `activity_sync_provider` -- there's no
+// push button in month view (#123 only wired one into the week view) -- so
+// this omits the field WeekPlanResponse otherwise requires, rather than
+// reusing it verbatim.
 export type MonthPlanResponse = {
   month: string
-  weeks: WeekPlanResponse[]
+  weeks: Omit<WeekPlanResponse, 'activity_sync_provider'>[]
 }

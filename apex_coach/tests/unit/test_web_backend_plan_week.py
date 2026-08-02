@@ -1,10 +1,13 @@
-"""F19.4 (#119): GET /api/plan/week against a fixture DB.
+"""F19.4/F19.7 (#119, #123): GET /api/plan/week against a fixture DB.
 
 Mirrors test_web_backend_morning_decision.py's structure (fixture-DB engine
 + reloaded app module + TestClient). The endpoint only *reads*
 weekly_plans.generated_structure_json — the same JSON F19.2's
 `generate-week-structure` CLI command already persists — so these tests seed
-that column directly rather than re-running the generator.
+that column directly rather than re-running the generator. `pushed` (F19.7)
+now reflects weekly_plans.pushed_event_ids_json rather than F19.4's
+hardcoded `False`; see test_web_backend_plan_week_push.py for the push
+endpoint's own tests.
 """
 
 import importlib
@@ -74,7 +77,7 @@ GENERATED_STRUCTURE = [
 ]
 
 
-def test_plan_week_returns_generated_structure_with_every_session_not_pushed(tmp_path):
+def test_plan_week_returns_generated_structure_with_real_pushed_status(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_engine(str(db_path))
     metadata.create_all(engine)
@@ -85,8 +88,7 @@ def test_plan_week_returns_generated_structure_with_every_session_not_pushed(tmp
             [{"day": e["day"], "session_type": e["session_type"]} for e in GENERATED_STRUCTURE]
         ),
         generated_structure_json=json.dumps(GENERATED_STRUCTURE),
-        # Seeded to prove the endpoint deliberately ignores this column for
-        # now (#119: "every session shows as not pushed" until F19.7/#123).
+        # Monday has an event id (pushed), Tuesday/Wednesday don't (draft).
         pushed_event_ids_json=json.dumps({"Monday": "12345"}),
     )
 
@@ -98,14 +100,40 @@ def test_plan_week_returns_generated_structure_with_every_session_not_pushed(tmp
     assert body["week_start_date"] == "2026-08-03"
     assert body["generated"] is True
     assert len(body["days"]) == 3
+    # No athlete_profile row seeded -> defaults to intervals.icu (F19.7, #123).
+    assert body["activity_sync_provider"] == "INTERVALS_ICU"
 
     monday = body["days"][0]
     assert monday["day"] == "Monday"
     assert monday["session_type"] == "HIIT"
     assert monday["structure"] == GENERATED_STRUCTURE[0]["structure"]
-    assert monday["pushed"] is False  # not True, despite the seeded event id above
+    assert monday["pushed"] is True  # has an event id in pushed_event_ids_json
 
-    assert all(day["pushed"] is False for day in body["days"])
+    tuesday = body["days"][1]
+    wednesday = body["days"][2]
+    assert tuesday["pushed"] is False  # no event id -> local-only draft
+    assert wednesday["pushed"] is False
+
+
+def test_plan_week_reports_strava_provider(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(str(db_path))
+    metadata.create_all(engine)
+    plan_repo = PlanRepository(engine)
+    plan_repo.insert_athlete_profile(activity_sync_provider="STRAVA")
+    plan_repo.insert_weekly_plan(
+        week_start_date="2026-08-03",
+        planned_sessions_json=json.dumps(
+            [{"day": e["day"], "session_type": e["session_type"]} for e in GENERATED_STRUCTURE]
+        ),
+        generated_structure_json=json.dumps(GENERATED_STRUCTURE),
+    )
+
+    _main_module, client = _client_for(db_path)
+    response = client.get("/api/plan/week", params={"week_start": "2026-08-03"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["activity_sync_provider"] == "STRAVA"
 
 
 def test_plan_week_not_yet_generated_returns_empty_days(tmp_path):
@@ -126,7 +154,12 @@ def test_plan_week_not_yet_generated_returns_empty_days(tmp_path):
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body == {"week_start_date": "2026-08-03", "generated": False, "days": []}
+    assert body == {
+        "week_start_date": "2026-08-03",
+        "generated": False,
+        "days": [],
+        "activity_sync_provider": "INTERVALS_ICU",
+    }
 
 
 def test_plan_week_no_weekly_plan_row_returns_404(tmp_path):
