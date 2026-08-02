@@ -28,7 +28,9 @@ from apex_coach.adapters.errors import AdapterError
 from apex_coach.adapters.ollama_adapter import RealOllamaAdapter
 from apex_coach.adapters.whoop_adapter import RealWhoopAdapter
 from apex_coach.cli.main import (
+    DEFAULT_ACTIVITY_SYNC_PROVIDER,
     SESSION_TYPES,
+    _push_week,
     _resolve_todays_session,
     persist_decision_with_explanation,
     run_decision_pipeline,
@@ -362,33 +364,51 @@ def execution_score_trend(
     }
 
 
-# -- F19.4: web calendar week view (read-only preview, #119) ----------------
+# -- F19.4/F19.7: web calendar week view + push (#119, #123) ----------------
 #
-# Reuses PlanRepository.get_weekly_plan() to read weekly_plans.
+# GET reuses PlanRepository.get_weekly_plan() to read weekly_plans.
 # generated_structure_json — the same JSON already produced+persisted by
 # F19.2's `generate-week-structure` CLI command (apex_coach.cli.main
 # generate_week_structure_command / engines.structure_generator.
 # generate_week_structure()). This endpoint only *reads* the persisted
 # structure; it never calls the generator itself (docs/adr/0023 — no
 # duplicated business logic, mirrors `_print_week_structure`'s reading
-# logic). Every session is reported as `pushed: false` — push status only
-# becomes meaningful once F19.7 (#123) wires a push button up to
-# weekly_plans.pushed_event_ids_json; reading that column here would be
-# premature per #119's acceptance criteria.
+# logic). Per-day `pushed` now reflects whether that day has an event id in
+# weekly_plans.pushed_event_ids_json (F19.7, #123) -- true "pushed" vs.
+# local-only "draft", not the hardcoded `False` F19.4 shipped as a
+# placeholder.
+#
+# `activity_sync_provider` is included so the frontend can disable/hide the
+# push button for STRAVA athletes without a second round trip — same
+# resolution as `_build_plan_export_adapter`'s (a NULL column defaults to
+# DEFAULT_ACTIVITY_SYNC_PROVIDER, apex_coach.cli.main).
+#
+# POST /api/plan/week/push reuses `_push_week()` (apex_coach.cli.main) —
+# the exact push logic behind the `push-week` CLI command (F19.6, #121):
+# same adapter dispatch (intervals.icu-only, docs/adr/0027), same
+# create-vs-update-in-place event id tracking. Not a second implementation.
 
 
-def _structured_days(generated_structure_json: str) -> list[dict]:
+def _resolved_activity_sync_provider() -> str:
+    profile = plan_repo.get_athlete_profile()
+    return (profile or {}).get("activity_sync_provider") or DEFAULT_ACTIVITY_SYNC_PROVIDER
+
+
+def _structured_days(generated_structure_json: str, pushed_event_ids_json: str | None = None) -> list[dict]:
     """Turns a weekly_plans.generated_structure_json blob into the per-day
     payload shape both /api/plan/week and /api/plan/month return. Pulled out
     on its own so the month endpoint (F19.5, #120) doesn't reimplement this
-    read logic a second time (docs/adr/0023)."""
+    read logic a second time (docs/adr/0023). `pushed` reflects whether that
+    day has an event id in weekly_plans.pushed_event_ids_json (F19.7, #123)
+    -- true "pushed" vs. local-only "draft"."""
     structured = json.loads(generated_structure_json)
+    pushed_event_ids = json.loads(pushed_event_ids_json or "{}")
     return [
         {
             "day": entry["day"],
             "session_type": entry["session_type"],
             "structure": entry["structure"],
-            "pushed": False,
+            "pushed": bool(pushed_event_ids.get(entry["day"])),
         }
         for entry in structured
     ]
@@ -412,13 +432,21 @@ def plan_week(
             detail=f"no weekly plan stored for week_start_date {week_start!r}",
         )
 
+    activity_sync_provider = _resolved_activity_sync_provider()
+
     if not week.get("generated_structure_json"):
-        return {"week_start_date": week_start, "generated": False, "days": []}
+        return {
+            "week_start_date": week_start,
+            "generated": False,
+            "days": [],
+            "activity_sync_provider": activity_sync_provider,
+        }
 
     return {
         "week_start_date": week_start,
         "generated": True,
-        "days": _structured_days(week["generated_structure_json"]),
+        "days": _structured_days(week["generated_structure_json"], week.get("pushed_event_ids_json")),
+        "activity_sync_provider": activity_sync_provider,
     }
 
 
@@ -443,7 +471,7 @@ def _week_view_payload(week_start: str) -> dict:
     return {
         "week_start_date": week_start,
         "generated": True,
-        "days": _structured_days(week["generated_structure_json"]),
+        "days": _structured_days(week["generated_structure_json"], week.get("pushed_event_ids_json")),
     }
 
 
@@ -480,6 +508,46 @@ def plan_month(
 
     weeks = [_week_view_payload(week_start) for week_start in _weeks_overlapping_month(month_first_day)]
     return {"month": month, "weeks": weeks}
+
+
+@app.post("/api/plan/week/push")
+def push_week_endpoint(
+    week_start: str = Query(
+        ..., description="ISO 8601 date (YYYY-MM-DD) for the Monday this week starts on."
+    ),
+) -> dict:
+    """Push a week's generated structured plan to intervals.icu as calendar
+    events, via `_push_week()` (apex_coach.cli.main, F19.6) — always against
+    the real intervals.icu API (`real=True`): unlike the CLI's `push-week
+    --real` flag, which defaults to a mock adapter for local demoing, a web
+    UI button click has no non-real mode to fall back to.
+
+    Maps `_push_week()`'s click.ClickException failures to HTTP errors: "no
+    weekly plan stored" -> 404 (mirrors GET's own 404 for the same case);
+    everything else (no generated structure yet, non-intervals.icu
+    provider, no stored API key, adapter failure) -> 400.
+    """
+    try:
+        date.fromisoformat(week_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid date: {week_start!r}")
+
+    try:
+        structured_sessions, updated_event_ids = _push_week(
+            plan_repo, engine, settings, week_start, real=True
+        )
+    except click.ClickException as e:
+        message = str(e)
+        status_code = 404 if message.startswith("no weekly plan stored") else 400
+        raise HTTPException(status_code=status_code, detail=message) from e
+
+    return {
+        "week_start_date": week_start,
+        "pushed_days": [
+            {"day": session["day"], "event_id": updated_event_ids[session["day"]]}
+            for session in structured_sessions
+        ],
+    }
 
 
 # -- F16.3: load actual vs. target (weekly + monthly) -----------------------
