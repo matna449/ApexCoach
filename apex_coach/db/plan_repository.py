@@ -93,19 +93,30 @@ class PlanRepository:
         periodisation_phase: str,
         load_target_total: float,
         race_date: str | None = None,
+        source: str = "ATHLETE",
     ) -> bool:
         """Insert-or-update a monthly_targets row by month_start_date
         existence — moved here from apex_coach.cli.main's
         _upsert_monthly_target() (F19.8/F20.3) so the CLI's
         set-monthly-target command, the web PUT endpoint, and F20.3's
-        macro-plan accept step all share exactly one implementation of this
-        branching rather than each importing across module-layering
-        boundaries (engines/web never import from cli). Returns True if a
-        new row was created, False if an existing one was updated."""
+        macro-plan accept/regenerate steps all share exactly one
+        implementation of this branching rather than each importing across
+        module-layering boundaries (engines/web never import from cli).
+        Returns True if a new row was created, False if an existing one
+        was updated.
+
+        `source` (F20.4) records who wrote this write — 'ATHLETE' (the
+        default, matching every caller except the macro-plan engine) or
+        'MACRO_PLAN' (accept_macro_plan()/regenerate_macro_plan() pass this
+        explicitly). preview_macro_plan()'s already-customized guardrail
+        reads it back to tell "the macro plan itself wrote this, safe to
+        regenerate" apart from "the athlete deliberately set this, don't
+        touch."""
         fields = {
             "periodisation_phase": periodisation_phase,
             "load_target_total": load_target_total,
             "race_date": race_date,
+            "source": source,
         }
         existing = self.get_monthly_target(month_start_date)
         if existing is None:

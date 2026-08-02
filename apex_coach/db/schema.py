@@ -189,6 +189,24 @@ monthly_targets = sa.Table(
     sa.Column("hrv_trend_json", sa.Text, nullable=True),
     sa.Column("race_date", sa.String, nullable=True),
     sa.Column("month_summary_json", sa.Text, nullable=True),
+    # PRD #138 (F20.4): who last wrote periodisation_phase/load_target_total
+    # -- 'ATHLETE' for set-monthly-target/the web UI, 'MACRO_PLAN' for
+    # accept_macro_plan()/regenerate_macro_plan(). Nullable (legacy rows
+    # predate this column) and treated the same as 'ATHLETE' by the
+    # already-customized guardrail -- only a row explicitly marked
+    # 'MACRO_PLAN' is safe for a later accept/regenerate run to overwrite
+    # without the athlete having re-touched it since.
+    sa.Column(
+        "source",
+        sa.Enum(
+            "ATHLETE",
+            "MACRO_PLAN",
+            name="monthly_target_source",
+            native_enum=False,
+            create_constraint=True,
+        ),
+        nullable=True,
+    ),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
     sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
 )
