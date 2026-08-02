@@ -1,22 +1,30 @@
-"""Macro training-block planning (PRD #138, F20.2/F20.3).
+"""Macro training-block planning (PRD #138, F20.2/F20.3/F20.4).
 
 Functional core, imperative shell (docs/adr/0016, reapplied per
 docs/adr/0017): RACE_DISTANCE_PHASE_TEMPLATES/estimate_current_weekly_load_au/
 generate_macro_plan are pure -- no database or repository dependency.
-preview_macro_plan()/accept_macro_plan() at the bottom of this module are
-the impure entry points (mirroring monthly_engine.py's own
-run_monthly_review()) -- they read activity history / existing
-race_goals+monthly_targets rows and, for accept, write them.
+preview_macro_plan()/accept_macro_plan()/regenerate_macro_plan() at the
+bottom of this module are the impure entry points (mirroring
+monthly_engine.py's own run_monthly_review()) -- they read activity
+history / existing race_goals+monthly_targets rows and, for accept/
+regenerate, write them.
 
 This is the fourth, higher horizon -- Macro/Race-Goal -- above Monthly in
 the Three-Horizon Model (ADR-0002). It only ever proposes *initial* values
-for monthly_targets rows (via accept_macro_plan()); it has no override
-authority over the existing Daily/Weekly/Monthly hierarchy.
+for monthly_targets rows (via accept_macro_plan()/regenerate_macro_plan());
+it has no override authority over the existing Daily/Weekly/Monthly
+hierarchy.
 """
 
+from calendar import monthrange
 from datetime import date, timedelta
 
-from apex_coach.engines.monthly_engine import OVERREACH_THRESHOLD, WEEKS_PER_MONTH, taper_adjusted_target
+from apex_coach.engines.monthly_engine import (
+    OVERREACH_THRESHOLD,
+    WEEKS_PER_MONTH,
+    _week_starts_in_month,
+    taper_adjusted_target,
+)
 
 # Race distance -> ordered (periodisation_phase, minimum_weeks) tuples,
 # summing to that distance's minimum sensible block length. Standard
@@ -221,10 +229,16 @@ def preview_macro_plan(plan_repo, metrics_repo, goal_distance: str, race_date: s
     enough runway for the chosen distance's minimum block length.
 
     Each month in the returned `months` list is annotated with
-    `already_set`: True if that month already has an athlete-set
-    periodisation_phase/load_target_total that accept_macro_plan() would
-    leave untouched -- so the preview honestly shows what accept would
-    actually do, not just what the raw template proposes.
+    `already_set`: True if that month already has periodisation_phase/
+    load_target_total that accept_macro_plan()/regenerate_macro_plan()
+    would leave untouched -- so the preview honestly shows what accept
+    would actually do, not just what the raw template proposes. A month
+    whose existing values have source='MACRO_PLAN' (a *previous*
+    accept/regenerate run wrote them, not the athlete) does NOT count as
+    already_set -- it's exactly what a later accept/regenerate run is
+    meant to refresh. Only a row the athlete wrote (source='ATHLETE', or
+    NULL for legacy rows predating this column -- treated the same,
+    conservatively) is protected.
     """
     today_date = date.fromisoformat(today)
     race_date_date = date.fromisoformat(race_date)
@@ -242,6 +256,7 @@ def preview_macro_plan(plan_repo, metrics_repo, goal_distance: str, race_date: s
             existing is not None
             and existing.get("periodisation_phase") is not None
             and existing.get("load_target_total") is not None
+            and existing.get("source") != "MACRO_PLAN"
         )
         annotated_months.append({**month, "already_set": already_set})
 
@@ -302,8 +317,87 @@ def accept_macro_plan(
             written_months.append({**month, "written": False})
             continue
         created = plan_repo.upsert_monthly_target(
-            month["month_start_date"], month["periodisation_phase"], month["load_target_total"]
+            month["month_start_date"],
+            month["periodisation_phase"],
+            month["load_target_total"],
+            source="MACRO_PLAN",
         )
         written_months.append({**month, "written": True, "created": created})
+
+    return {**preview, "months": written_months}
+
+
+def _month_has_stale_week_structure(plan_repo, month_start_date: str) -> bool:
+    """True if any Mon-Sun week overlapping this calendar month already has
+    weekly_plans.generated_structure_json or pushed_event_ids_json set --
+    a changed monthly load target invalidates week-level structure
+    generated from the old one (mirrors regenerate-week-structure's own
+    stale-push warning, apex_coach.cli.main)."""
+    month_start = date.fromisoformat(month_start_date)
+    month_end = month_start.replace(day=monthrange(month_start.year, month_start.month)[1])
+    for week_start in _week_starts_in_month(month_start, month_end):
+        week = plan_repo.get_weekly_plan(week_start.isoformat())
+        if week is None:
+            continue
+        if week.get("generated_structure_json") or week.get("pushed_event_ids_json"):
+            return True
+    return False
+
+
+def regenerate_macro_plan(plan_repo, metrics_repo, goal_distance: str, race_date: str, today: str) -> dict:
+    """Explicit re-run of the macro plan for when the athlete's goal
+    distance or race date changes mid-block (F20.4) -- same shape as
+    F19.3's regenerate-week-structure (#122): an explicit action, not
+    continuous re-planning (PRD #138 is deliberate about this -- ongoing
+    adaptation stays the monthly engine's own job,
+    forecast_performance()/next_month_recommendation()).
+
+    Only ever touches *future* months -- strictly after today's month.
+    The current and past months are left alone unconditionally, regardless
+    of what the new template would propose for them and regardless of
+    whether they're already set (re-planning the month the athlete is
+    already mid-way through would pull the rug out from under what they're
+    currently executing). Still applies accept_macro_plan()'s own
+    already-customized-month guardrail to the future months it does
+    consider.
+
+    Requires an existing ACTIVE race goal -- regenerating implies changing
+    one, not creating one from scratch (use accept_macro_plan() for that).
+    Abandons it and creates a fresh ACTIVE row with the new/confirmed
+    distance and race date, mirroring accept_macro_plan()'s own --replace
+    path -- the same single-ACTIVE-goal write pattern everywhere a goal
+    changes, not a second one specific to regenerate.
+
+    Each written month is additionally flagged `stale_week_structure`
+    (only meaningful when written=True -- a skipped month's load target
+    didn't change, so there's no new staleness to warn about)."""
+    existing_active = plan_repo.get_active_race_goal()
+    if existing_active is None:
+        raise ValueError("no active race goal to regenerate -- run accept-macro-plan first.")
+
+    preview = preview_macro_plan(plan_repo, metrics_repo, goal_distance, race_date, today)
+
+    today_date = date.fromisoformat(today)
+    current_month_start = date(today_date.year, today_date.month, 1).isoformat()
+    future_months = [m for m in preview["months"] if m["month_start_date"] > current_month_start]
+
+    plan_repo.update_race_goal_status(existing_active["id"], "ABANDONED")
+    plan_repo.insert_race_goal(goal_distance=goal_distance, target_race_date=race_date, status="ACTIVE")
+
+    written_months = []
+    for month in future_months:
+        if month["already_set"]:
+            written_months.append({**month, "written": False, "stale_week_structure": False})
+            continue
+        created = plan_repo.upsert_monthly_target(
+            month["month_start_date"],
+            month["periodisation_phase"],
+            month["load_target_total"],
+            source="MACRO_PLAN",
+        )
+        stale = _month_has_stale_week_structure(plan_repo, month["month_start_date"])
+        written_months.append(
+            {**month, "written": True, "created": created, "stale_week_structure": stale}
+        )
 
     return {**preview, "months": written_months}

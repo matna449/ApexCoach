@@ -30,7 +30,11 @@ from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import KEY_SESSION_TYPES, make_decision
-from apex_coach.engines.macro_plan_engine import accept_macro_plan, preview_macro_plan
+from apex_coach.engines.macro_plan_engine import (
+    accept_macro_plan,
+    preview_macro_plan,
+    regenerate_macro_plan,
+)
 from apex_coach.engines.monthly_engine import (
     calculate_weekly_target,
     load_au_for_activity,
@@ -1232,6 +1236,66 @@ def accept_macro_plan_command(distance: str, race_date: str, replace: bool, toda
                 f"  {month['month_start_date']}: {action} → {month['periodisation_phase']}, "
                 f"{month['load_target_total']} AU/month"
             )
+        else:
+            click.echo(f"  {month['month_start_date']}: left as-is (already set by the athlete)")
+
+
+@cli.command(name="regenerate-macro-plan")
+@click.option(
+    "--distance",
+    required=True,
+    type=click.Choice(RACE_DISTANCE_CHOICES),
+    help="Goal race distance — pass the same value as before if only the race date changed.",
+)
+@click.option(
+    "--race-date",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) of the target race — pass the same value as before if "
+    "only the distance changed.",
+)
+@click.option(
+    "--today",
+    default=None,
+    help="ISO 8601 date to treat as 'today' (defaults to the actual current date, UTC).",
+)
+def regenerate_macro_plan_command(distance: str, race_date: str, today: str | None):
+    """Explicitly re-run the macro plan after the athlete's goal distance
+    or race date changes mid-block (PRD #138, F20.4) — only ever touches
+    future months; the current and past months are left alone regardless
+    of what the new template proposes. Requires an existing ACTIVE race
+    goal — run accept-macro-plan first if there isn't one yet.
+
+    Warns per month if week-level structure was already generated (or
+    pushed to intervals.icu) under the old target — that structure is now
+    stale until `regenerate-week-structure` (and `push-week`) are re-run
+    for the affected weeks."""
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+    metrics_repo = MetricsRepository(engine)
+
+    try:
+        result = regenerate_macro_plan(plan_repo, metrics_repo, distance, race_date, today)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(f"Race goal updated: {distance} on {race_date}.")
+    for month in result["months"]:
+        if month["written"]:
+            action = "created" if month["created"] else "updated"
+            click.echo(
+                f"  {month['month_start_date']}: {action} → {month['periodisation_phase']}, "
+                f"{month['load_target_total']} AU/month"
+            )
+            if month["stale_week_structure"]:
+                click.echo(
+                    "    Warning: week-level structure was already generated (or pushed to "
+                    "intervals.icu) for this month under the old target — it's stale until "
+                    "you re-run regenerate-week-structure (and push-week) for those weeks."
+                )
         else:
             click.echo(f"  {month['month_start_date']}: left as-is (already set by the athlete)")
 

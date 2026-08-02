@@ -118,6 +118,25 @@ def test_upsert_monthly_target_updates_when_row_already_exists(repo):
     assert row["race_date"] is None
 
 
+def test_upsert_monthly_target_defaults_source_to_athlete(repo):
+    repo.upsert_monthly_target("2026-07-01", "BASE", 300.0)
+
+    assert repo.get_monthly_target("2026-07-01")["source"] == "ATHLETE"
+
+
+def test_upsert_monthly_target_accepts_explicit_macro_plan_source(repo):
+    repo.upsert_monthly_target("2026-07-01", "BASE", 300.0, source="MACRO_PLAN")
+
+    assert repo.get_monthly_target("2026-07-01")["source"] == "MACRO_PLAN"
+
+
+def test_monthly_target_source_check_constraint_rejects_bad_value(repo):
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.insert_monthly_target(
+            month_start_date="2026-07-01", periodisation_phase="BASE", source="NOT_REAL"
+        )
+
+
 # -- race_goals ---------------------------------------------------------------
 
 
