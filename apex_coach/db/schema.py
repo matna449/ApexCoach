@@ -193,6 +193,55 @@ monthly_targets = sa.Table(
     sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
 )
 
+# PRD #138 (F20.1): one row per training-block goal -- a fourth, higher
+# horizon (Macro/Race-Goal) above Monthly in the Three-Horizon Model
+# (ADR-0002), with advisory/initial-value-only authority: a race goal seeds
+# monthly_targets rows (once F20.3's accept step ships) but never overrides
+# Daily/Weekly/Monthly's existing authority hierarchy. At most one ACTIVE
+# row at a time (docs/adr/0023, single-athlete system) -- enforced by the
+# partial unique index below (ix_race_goals_one_active), not just at the
+# repository layer.
+race_goals = sa.Table(
+    "race_goals",
+    metadata,
+    sa.Column("id", sa.String, primary_key=True, default=_uuid),
+    sa.Column(
+        "goal_distance",
+        sa.Enum(
+            "5K",
+            "10K",
+            "HALF_MARATHON",
+            "MARATHON",
+            name="goal_distance",
+            native_enum=False,
+            create_constraint=True,
+        ),
+        nullable=False,
+    ),
+    sa.Column("target_race_date", sa.String, nullable=False),
+    sa.Column(
+        "status",
+        sa.Enum(
+            "ACTIVE",
+            "COMPLETED",
+            "ABANDONED",
+            name="race_goal_status",
+            native_enum=False,
+            create_constraint=True,
+        ),
+        nullable=False,
+    ),
+    sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
+    sa.Column("updated_at", sa.String, nullable=True, onupdate=_now_iso),
+)
+
+sa.Index(
+    "ix_race_goals_one_active",
+    race_goals.c.status,
+    unique=True,
+    sqlite_where=race_goals.c.status == "ACTIVE",
+)
+
 # Single-row athlete config (docs/adr/0023: single-user, no per-athlete
 # keying needed) — max_hr/sex feed the Banister TRIMP load calculation
 # (docs/adr/0024); baseline_resting_hr is a fallback only, the TRIMP
