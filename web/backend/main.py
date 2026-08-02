@@ -29,9 +29,11 @@ from apex_coach.adapters.ollama_adapter import RealOllamaAdapter
 from apex_coach.adapters.whoop_adapter import RealWhoopAdapter
 from apex_coach.cli.main import (
     DEFAULT_ACTIVITY_SYNC_PROVIDER,
+    PERIODISATION_PHASES,
     SESSION_TYPES,
     _push_week,
     _resolve_todays_session,
+    _upsert_monthly_target,
     persist_decision_with_explanation,
     run_decision_pipeline,
 )
@@ -547,6 +549,97 @@ def push_week_endpoint(
             {"day": session["day"], "event_id": updated_event_ids[session["day"]]}
             for session in structured_sessions
         ],
+    }
+
+
+# -- F19.8: web UI for the monthly target (phase/load-target/race-date) ----
+#
+# The monthly target (periodisation_phase, load_target_total, race_date) was
+# previously CLI-only (`set-monthly-target`, F11.8/#48). These endpoints are
+# a thin HTTP wrapper around the exact same read/write path: GET reuses
+# `PlanRepository.get_monthly_target()` (same as `plan_month`/`load_monthly`
+# above), and POST reuses `_upsert_monthly_target()` (apex_coach.cli.main) —
+# the identical insert-vs-update-by-existence branching `set-monthly-target`
+# uses, extracted alongside this ticket so there is exactly one
+# implementation of that branch (docs/adr/0023).
+
+
+@app.get("/api/plan/month/target")
+def get_monthly_target(
+    month_start: str = Query(
+        ..., description="ISO 8601 date (YYYY-MM-DD) for the first day of the month."
+    ),
+) -> dict:
+    try:
+        date.fromisoformat(month_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid date: {month_start!r}")
+
+    target = plan_repo.get_monthly_target(month_start)
+    if target is None:
+        return {
+            "month_start_date": month_start,
+            "exists": False,
+            "periodisation_phase": None,
+            "load_target_total": None,
+            "race_date": None,
+        }
+    return {
+        "month_start_date": month_start,
+        "exists": True,
+        "periodisation_phase": target["periodisation_phase"],
+        "load_target_total": target["load_target_total"],
+        "race_date": target["race_date"],
+    }
+
+
+class MonthlyTargetRequest(BaseModel):
+    periodisation_phase: str
+    load_target_total: float
+    race_date: str | None = None
+
+
+@app.post("/api/plan/month/target")
+def set_monthly_target_endpoint(
+    request: MonthlyTargetRequest,
+    month_start: str = Query(
+        ..., description="ISO 8601 date (YYYY-MM-DD) for the first day of the month."
+    ),
+) -> dict:
+    """Create (first write for `month_start`) or update (subsequent writes)
+    the monthly target, via `_upsert_monthly_target()` — no parallel
+    persistence path to `set-monthly-target`."""
+    try:
+        date.fromisoformat(month_start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid date: {month_start!r}")
+
+    if request.periodisation_phase not in PERIODISATION_PHASES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown periodisation_phase: {request.periodisation_phase!r}",
+        )
+
+    if request.race_date is not None:
+        try:
+            date.fromisoformat(request.race_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"invalid race_date: {request.race_date!r}")
+
+    created = _upsert_monthly_target(
+        plan_repo,
+        month_start,
+        request.periodisation_phase,
+        request.load_target_total,
+        request.race_date,
+    )
+    target = plan_repo.get_monthly_target(month_start)
+    return {
+        "month_start_date": month_start,
+        "created": created,
+        "periodisation_phase": target["periodisation_phase"],
+        "load_target_total": target["load_target_total"],
+        "race_date": target["race_date"],
     }
 
 

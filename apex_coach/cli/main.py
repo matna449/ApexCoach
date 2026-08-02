@@ -995,6 +995,32 @@ def push_week(week_start: str, real: bool):
     click.echo(f"Pushed {len(structured_sessions)} sessions for week starting {week_start}.")
 
 
+def _upsert_monthly_target(
+    repo: PlanRepository,
+    month_start_date: str,
+    periodisation_phase: str,
+    load_target_total: float,
+    race_date: str | None,
+) -> bool:
+    """Insert-or-update a monthly_targets row by month_start_date existence —
+    the branching logic shared by the `set-monthly-target` CLI command below
+    and `POST /api/plan/month/target` (F19.8, docs/adr/0023) so there's
+    exactly one insert-vs-update-by-existence implementation. Returns True
+    if a new row was created, False if an existing one was updated."""
+    fields = {
+        "periodisation_phase": periodisation_phase,
+        "load_target_total": load_target_total,
+        "race_date": race_date,
+    }
+
+    existing = repo.get_monthly_target(month_start_date)
+    if existing is None:
+        repo.insert_monthly_target(month_start_date=month_start_date, **fields)
+        return True
+    repo.update_monthly_target(month_start_date, **fields)
+    return False
+
+
 @cli.command(name="set-monthly-target")
 @click.option(
     "--month-start-date",
@@ -1030,8 +1056,7 @@ def set_monthly_target(
     show: bool,
 ):
     """Set (or view) a training block's monthly target: periodisation phase,
-    total load target, and race date. Writes via PlanRepository.insert_monthly_target()
-    on first write for a given --month-start-date, update_monthly_target() thereafter."""
+    total load target, and race date. Writes via _upsert_monthly_target()."""
     settings = get_settings()
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
     repo = PlanRepository(engine)
@@ -1053,18 +1078,12 @@ def set_monthly_target(
             "(unless --show is passed to view an existing target)."
         )
 
-    fields = {
-        "periodisation_phase": periodisation_phase,
-        "load_target_total": load_target_total,
-        "race_date": race_date,
-    }
-
-    existing = repo.get_monthly_target(month_start_date)
-    if existing is None:
-        repo.insert_monthly_target(month_start_date=month_start_date, **fields)
+    created = _upsert_monthly_target(
+        repo, month_start_date, periodisation_phase, load_target_total, race_date
+    )
+    if created:
         click.echo(f"Monthly target created for {month_start_date}.")
     else:
-        repo.update_monthly_target(month_start_date, **fields)
         click.echo(f"Monthly target updated for {month_start_date}.")
 
 

@@ -5,6 +5,7 @@ import HrvTrendChart from './HrvTrendChart'
 import MonthView from './MonthView'
 import MorningView from './MorningView'
 import PlanView from './PlanView'
+import TargetView from './TargetView'
 import Sidebar, { type View } from './Sidebar'
 
 // F17.1 (#83): morning becomes the primary screen; the F16.2/3/4 trend
@@ -20,6 +21,9 @@ import Sidebar, { type View } from './Sidebar'
 //
 // F19.5 (#120): a fourth value ('month') renders MonthView, the month
 // calendar preview alongside PlanView's week preview.
+//
+// F19.8 (#137): a fifth value ('target') renders TargetView, the monthly
+// target (phase/load-target/race-date) input that feeds week generation.
 const API_BASE_URL = 'http://localhost:8000'
 
 type HealthResponse = {
@@ -79,6 +83,7 @@ function App() {
         {view === 'history' && <HistoryView />}
         {view === 'plan' && <PlanView />}
         {view === 'month' && <MonthView />}
+        {view === 'target' && <TargetView />}
       </main>
     </div>
   )
