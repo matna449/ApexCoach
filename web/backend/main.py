@@ -105,6 +105,36 @@ def _question_catalog(session_type: str) -> dict:
     }
 
 
+def _existing_decision_response(decision_row: dict | None) -> dict | None:
+    """#132: builds an `existing_decision` payload shaped exactly like
+    `POST /api/morning/decision`'s response from today's `decisions` row,
+    or None if there's nothing rehydratable yet -- either no decision for
+    the date, or only the bare crash-safe row (ADR-0001, inserted before
+    Ollama ran) with no `llm_explanation`/`decision_context_json`. A
+    degraded explanation (banner/WARN, no `llm_explanation`) is never
+    persisted by `persist_decision_with_explanation()`, so a row with
+    both fields populated always means `banner`/`severity` were None at
+    generation time too."""
+    if (
+        decision_row is None
+        or decision_row["llm_explanation"] is None
+        or decision_row["decision_context_json"] is None
+    ):
+        return None
+    rationale = json.loads(decision_row["rationale_json"]) if decision_row["rationale_json"] else {}
+    return {
+        "recommendation": decision_row["recommendation"],
+        "rationale": rationale.get("rationale"),
+        "check_recovery_week_trigger": rationale.get("check_recovery_week_trigger", False),
+        "override_triggered": rationale.get("override_triggered", False),
+        "override_reasons": rationale.get("override_reasons", []),
+        "explanation": decision_row["llm_explanation"],
+        "banner": None,
+        "severity": None,
+        "decision_context": json.loads(decision_row["decision_context_json"]),
+    }
+
+
 @app.get("/api/morning/context")
 def morning_context(
     date_param: str | None = Query(default=None, alias="date"),
@@ -165,12 +195,22 @@ def morning_context(
             },
         )
 
-    return {
+    response = {
         "date": resolved_date,
         "session_type": resolved_session_type,
         "biometrics": biometrics,
         "questions": _question_catalog(resolved_session_type),
     }
+
+    # #132: widen this response with today's already-decided outcome, if
+    # one exists, so the frontend can rehydrate straight to it instead of
+    # restarting the health check (server remains the source of truth,
+    # refetched per date -- ADR-0023, no new client-side store).
+    existing_decision = _existing_decision_response(plan_repo.get_decision(resolved_date))
+    if existing_decision is not None:
+        response["existing_decision"] = existing_decision
+
+    return response
 
 
 # -- F17.2: morning decision (health check -> classify -> decide -> --------

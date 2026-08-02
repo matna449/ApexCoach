@@ -148,3 +148,97 @@ def test_morning_context_rejects_invalid_date(tmp_path):
     response = client.get("/api/morning/context?date=not-a-date")
 
     assert response.status_code == 400
+
+
+# -- #132: existing_decision rehydration ------------------------------------
+
+
+def test_morning_context_omits_existing_decision_when_none_persisted(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(str(db_path))
+    metadata.create_all(engine)
+    _seed_week(db_path, week_start="2026-08-03", monday="HIIT")
+
+    payload = MockWhoopAdapter().get_daily_payload("2026-08-03")
+    client = _client_for(db_path)
+    with patch("web.backend.main.RealWhoopAdapter") as MockAdapterClass:
+        MockAdapterClass.return_value.get_daily_payload.return_value = payload
+        response = client.get("/api/morning/context?date=2026-08-03")
+
+    assert response.status_code == 200, response.text
+    assert "existing_decision" not in response.json()
+
+
+def test_morning_context_omits_existing_decision_for_bare_crash_safe_row_only(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_engine(str(db_path))
+    metadata.create_all(engine)
+    _seed_week(db_path, week_start="2026-08-03", monday="HIIT")
+
+    plan_repo = PlanRepository(engine)
+    from apex_coach.db.metrics_repository import MetricsRepository
+
+    MetricsRepository(engine).insert_daily_metrics(date="2026-08-03")
+    # The bare pre-Ollama row (ADR-0001): no llm_explanation, no
+    # decision_context_json.
+    plan_repo.insert_decision(date="2026-08-03", recommendation="GO")
+
+    payload = MockWhoopAdapter().get_daily_payload("2026-08-03")
+    client = _client_for(db_path)
+    with patch("web.backend.main.RealWhoopAdapter") as MockAdapterClass:
+        MockAdapterClass.return_value.get_daily_payload.return_value = payload
+        response = client.get("/api/morning/context?date=2026-08-03")
+
+    assert response.status_code == 200, response.text
+    assert "existing_decision" not in response.json()
+
+
+def test_morning_context_returns_existing_decision_when_full_decision_persisted(tmp_path):
+    import json
+
+    db_path = tmp_path / "test.db"
+    engine = create_engine(str(db_path))
+    metadata.create_all(engine)
+    _seed_week(db_path, week_start="2026-08-03", monday="HIIT")
+
+    plan_repo = PlanRepository(engine)
+    from apex_coach.db.metrics_repository import MetricsRepository
+
+    MetricsRepository(engine).insert_daily_metrics(date="2026-08-03")
+    decision_context = {
+        "date": "2026-08-03",
+        "decision": {
+            "rationale": {
+                "rule_applied": "Recovery and HRV both look solid this morning.",
+                "rationale": "Recovery and HRV both look solid this morning.",
+                "override_triggered": False,
+                "override_reasons": [],
+                "check_recovery_week_trigger": False,
+            }
+        },
+    }
+    plan_repo.insert_decision(
+        date="2026-08-03",
+        recommendation="GO",
+        rationale_json=json.dumps(decision_context["decision"]["rationale"]),
+        llm_explanation="You're well recovered -- proceed as planned.",
+        decision_context_json=json.dumps(decision_context),
+    )
+
+    payload = MockWhoopAdapter().get_daily_payload("2026-08-03")
+    client = _client_for(db_path)
+    with patch("web.backend.main.RealWhoopAdapter") as MockAdapterClass:
+        MockAdapterClass.return_value.get_daily_payload.return_value = payload
+        response = client.get("/api/morning/context?date=2026-08-03")
+
+    assert response.status_code == 200, response.text
+    existing = response.json()["existing_decision"]
+    assert existing["recommendation"] == "GO"
+    assert existing["rationale"] == "Recovery and HRV both look solid this morning."
+    assert existing["explanation"] == "You're well recovered -- proceed as planned."
+    assert existing["override_triggered"] is False
+    assert existing["override_reasons"] == []
+    assert existing["check_recovery_week_trigger"] is False
+    assert existing["banner"] is None
+    assert existing["severity"] is None
+    assert existing["decision_context"] == decision_context
