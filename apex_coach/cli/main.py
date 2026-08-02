@@ -1511,6 +1511,15 @@ def run_decision_pipeline(
             f"{classification['soreness_band'].value} ({fixed_answers['muscle_soreness']}/5)"
         ),
         "rule_applied": decision_result["rationale"] or "(no additional rationale)",
+        # #132: kept alongside the human-readable breakdown above so
+        # GET /api/morning/context's rehydration path can reconstruct the
+        # exact POST /api/morning/decision response shape (rationale as
+        # decision_result gave it, not the "(no additional rationale)"
+        # display fallback) from this one stored rationale_json blob.
+        "rationale": decision_result["rationale"],
+        "override_triggered": health_result["override_triggered"],
+        "override_reasons": health_result["override_reasons"],
+        "check_recovery_week_trigger": decision_result["check_recovery_week_trigger"],
     }
 
     plan_repo.insert_decision(
@@ -1562,13 +1571,20 @@ def persist_decision_with_explanation(plan_repo, date_str, resolved_session_type
     decisions is append-only (ADR-0003/0007); get_decision() returns the
     latest by created_at, so this becomes the record of what the athlete
     actually saw, while the bare pre-Ollama row remains the crash-safe
-    one. Shared by the CLI and the web backend (F17.2, #84)."""
+    one. Shared by the CLI and the web backend (F17.2, #84).
+
+    #132: also stores the full decision_context verbatim, so a later
+    GET /api/morning/context can rehydrate today's Decision Output (and
+    the Explanation Layer can answer further follow-ups against the exact
+    context the original explanation was generated from) without
+    reconstructing it from other tables."""
     plan_repo.insert_decision(
         date=date_str,
         scheduled_session=resolved_session_type,
         recommendation=decision_result["recommendation"],
         rationale_json=json.dumps(decision_context["decision"]["rationale"]),
         llm_explanation=llm_explanation,
+        decision_context_json=json.dumps(decision_context),
     )
 
 

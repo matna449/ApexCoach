@@ -125,6 +125,13 @@ decisions = sa.Table(
     ),
     sa.Column("rationale_json", sa.Text, nullable=True),
     sa.Column("llm_explanation", sa.Text, nullable=True),
+    # #132: the full decision_context dict the Explanation Layer needs to
+    # answer follow-ups, stored verbatim (not reconstructed at read time --
+    # athlete_context/weekly_context aren't otherwise re-derivable in a
+    # stable shape). Populated alongside llm_explanation once Ollama
+    # succeeds; a row with this NULL is treated as "no rehydratable
+    # decision" by GET /api/morning/context.
+    sa.Column("decision_context_json", sa.Text, nullable=True),
     sa.Column("athlete_override", sa.String, nullable=True),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
 )

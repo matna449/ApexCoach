@@ -15,20 +15,6 @@ export type Question = { key: string; text: string }
 
 export type QuestionCatalog = { fixed: Question[]; adaptive: Question[] }
 
-export type MorningContext = {
-  date: string
-  session_type: string
-  biometrics: Biometrics
-  questions: QuestionCatalog
-}
-
-export type NoPlanDetail = {
-  error: 'no_plan_for_date'
-  message: string
-  biometrics: Biometrics
-  available_session_types: string[]
-}
-
 export type DecisionResponse = {
   recommendation: string
   rationale: string | null
@@ -39,4 +25,21 @@ export type DecisionResponse = {
   banner: string | null
   severity: 'WARN' | 'INFO' | null
   decision_context: object
+}
+
+export type MorningContext = {
+  date: string
+  session_type: string
+  biometrics: Biometrics
+  questions: QuestionCatalog
+  // #132: today's already-decided outcome, if one exists -- present only
+  // when a full (non-degraded) decision was persisted for `date`.
+  existing_decision?: DecisionResponse | null
+}
+
+export type NoPlanDetail = {
+  error: 'no_plan_for_date'
+  message: string
+  biometrics: Biometrics
+  available_session_types: string[]
 }

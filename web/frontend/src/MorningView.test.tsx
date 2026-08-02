@@ -282,4 +282,31 @@ describe('MorningView', () => {
     expect(screen.queryByTestId('morning-explanation')).not.toBeInTheDocument()
     expect(screen.queryByTestId('morning-followup')).not.toBeInTheDocument()
   })
+
+  it('#132: rehydrates straight to the decision when existing_decision is present, skipping the health check', async () => {
+    const decision: DecisionResponse = {
+      recommendation: 'GO',
+      rationale: 'Recovery and HRV both look solid this morning.',
+      check_recovery_week_trigger: false,
+      override_triggered: false,
+      override_reasons: [],
+      explanation: 'You are well recovered -- proceed as planned.',
+      banner: null,
+      severity: null,
+      decision_context: { date: '2026-08-01' },
+    }
+    const context = { ...makeContext(), existing_decision: decision }
+
+    installFetch((url) => {
+      if (url.includes('/api/morning/context')) return jsonResponse(200, context)
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+
+    render(<MorningView />)
+
+    await waitFor(() => expect(screen.getByTestId('verdict-stamp')).toHaveTextContent('GO'))
+    expect(screen.getByTestId('morning-explanation')).toHaveTextContent(decision.explanation!)
+    // The health check never rendered -- straight to the rehydrated decision.
+    expect(screen.queryByTestId('question-muscle_soreness')).not.toBeInTheDocument()
+  })
 })

@@ -268,3 +268,22 @@ def test_decision_recommendation_check_constraint_rejects_bad_value(repo, metric
 def test_decision_requires_existing_daily_metrics_date(repo):
     with pytest.raises(sa.exc.IntegrityError):
         repo.insert_decision(date="2026-07-30", recommendation="GO")
+
+
+def test_decision_context_json_round_trips_through_insert_and_get(repo, metrics_repo):
+    metrics_repo.insert_daily_metrics(date="2026-07-30")
+    repo.insert_decision(
+        date="2026-07-30",
+        recommendation="GO",
+        decision_context_json='{"date": "2026-07-30", "decision": {"rationale": {}}}',
+    )
+
+    row = repo.get_decision("2026-07-30")
+    assert row["decision_context_json"] == '{"date": "2026-07-30", "decision": {"rationale": {}}}'
+
+
+def test_decision_context_json_defaults_to_none(repo, metrics_repo):
+    metrics_repo.insert_daily_metrics(date="2026-07-30")
+    repo.insert_decision(date="2026-07-30", recommendation="GO")
+
+    assert repo.get_decision("2026-07-30")["decision_context_json"] is None

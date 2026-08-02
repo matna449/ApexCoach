@@ -64,6 +64,11 @@ async function fetchContext(date: string, sessionType?: string): Promise<LoadSta
     }
   }
   const context = (await res.json()) as MorningContext
+  // #132: a full (non-degraded) decision already exists for this date --
+  // rehydrate straight to it instead of restarting the health check.
+  if (context.existing_decision) {
+    return { kind: 'decided', context, decision: context.existing_decision }
+  }
   return { kind: 'ready', context }
 }
 
