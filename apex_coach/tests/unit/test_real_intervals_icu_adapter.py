@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 import httpx
@@ -8,6 +9,7 @@ from apex_coach.adapters.intervals_icu_adapter import (
     ACTIVITY_FIELDS,
     RATE_LIMIT_MAX_RETRIES,
     IntervalsIcuAuthError,
+    IntervalsIcuEventNotFoundError,
     IntervalsIcuRateLimitError,
     IntervalsIcuUnmappedActivityTypeError,
     RealIntervalsIcuAdapter,
@@ -205,3 +207,66 @@ def test_get_activity_stream_404_returns_none(httpx_mock, sleeps):
 
     adapter = _adapter(sleep_fn)
     assert adapter.get_activity_stream(42) is None
+
+
+# -- push_session (F19.6/#121, docs/adr/0027 §3) --------------------------------
+
+SINGLE_BLOCK_SESSION = {
+    "day": "Monday",
+    "session_type": "Zone2_Long",
+    "structure": {
+        "type": "single_block",
+        "zone": "zone2",
+        "target_hr_bpm": 141.0,
+        "main_set_min": 69.0,
+        "warmup_cooldown_min": 10.0,
+        "total_duration_min": 79.0,
+    },
+}
+
+
+def test_push_session_with_no_existing_id_posts_to_create(httpx_mock, sleeps):
+    _, sleep_fn = sleeps
+    httpx_mock.add_response(
+        method="POST", url="https://intervals.icu/api/v1/athlete/0/events", json={"id": 555}
+    )
+
+    adapter = _adapter(sleep_fn)
+    event_id = adapter.push_session("2026-08-03", SINGLE_BLOCK_SESSION, None)
+
+    assert event_id == "555"
+    requests = httpx_mock.get_requests()
+    assert requests[0].method == "POST"
+    body = json.loads(requests[0].content)
+    assert body["start_date_local"] == "2026-08-03T00:00:00"
+    assert body["name"] == "ApexCoach: Zone2_Long"
+    assert "69min @ zone2" in body["description"]
+
+
+def test_push_session_with_existing_id_puts_to_update_in_place(httpx_mock, sleeps):
+    _, sleep_fn = sleeps
+    httpx_mock.add_response(
+        method="PUT",
+        url="https://intervals.icu/api/v1/athlete/0/events/555",
+        json={"id": 555},
+    )
+
+    adapter = _adapter(sleep_fn)
+    event_id = adapter.push_session("2026-08-03", SINGLE_BLOCK_SESSION, "555")
+
+    assert event_id == "555"
+    requests = httpx_mock.get_requests()
+    assert requests[0].method == "PUT"
+
+
+def test_push_session_put_to_missing_event_raises_event_not_found(httpx_mock, sleeps):
+    _, sleep_fn = sleeps
+    httpx_mock.add_response(
+        method="PUT",
+        url="https://intervals.icu/api/v1/athlete/0/events/999",
+        status_code=404,
+    )
+
+    adapter = _adapter(sleep_fn)
+    with pytest.raises(IntervalsIcuEventNotFoundError):
+        adapter.push_session("2026-08-03", SINGLE_BLOCK_SESSION, "999")
