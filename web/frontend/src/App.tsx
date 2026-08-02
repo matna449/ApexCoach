@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import ExecutionScoreTrendChart from './ExecutionScoreTrendChart'
 import LoadActualVsTargetChart from './LoadActualVsTargetChart'
 import HrvTrendChart from './HrvTrendChart'
+import MonthView from './MonthView'
 import MorningView from './MorningView'
 import PlanView from './PlanView'
 import Sidebar, { type View } from './Sidebar'
@@ -16,6 +17,9 @@ import Sidebar, { type View } from './Sidebar'
 // local view-state pattern gains a third value ('plan') for the new bare
 // stub route. MorningView and the three trend charts below are unchanged —
 // only wrapped in the new shell/palette.
+//
+// F19.5 (#120): a fourth value ('month') renders MonthView, the month
+// calendar preview alongside PlanView's week preview.
 const API_BASE_URL = 'http://localhost:8000'
 
 type HealthResponse = {
@@ -74,6 +78,7 @@ function App() {
         )}
         {view === 'history' && <HistoryView />}
         {view === 'plan' && <PlanView />}
+        {view === 'month' && <MonthView />}
       </main>
     </div>
   )

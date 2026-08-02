@@ -377,6 +377,23 @@ def execution_score_trend(
 # premature per #119's acceptance criteria.
 
 
+def _structured_days(generated_structure_json: str) -> list[dict]:
+    """Turns a weekly_plans.generated_structure_json blob into the per-day
+    payload shape both /api/plan/week and /api/plan/month return. Pulled out
+    on its own so the month endpoint (F19.5, #120) doesn't reimplement this
+    read logic a second time (docs/adr/0023)."""
+    structured = json.loads(generated_structure_json)
+    return [
+        {
+            "day": entry["day"],
+            "session_type": entry["session_type"],
+            "structure": entry["structure"],
+            "pushed": False,
+        }
+        for entry in structured
+    ]
+
+
 @app.get("/api/plan/week")
 def plan_week(
     week_start: str = Query(
@@ -398,17 +415,71 @@ def plan_week(
     if not week.get("generated_structure_json"):
         return {"week_start_date": week_start, "generated": False, "days": []}
 
-    structured = json.loads(week["generated_structure_json"])
-    days = [
-        {
-            "day": entry["day"],
-            "session_type": entry["session_type"],
-            "structure": entry["structure"],
-            "pushed": False,
-        }
-        for entry in structured
-    ]
-    return {"week_start_date": week_start, "generated": True, "days": days}
+    return {
+        "week_start_date": week_start,
+        "generated": True,
+        "days": _structured_days(week["generated_structure_json"]),
+    }
+
+
+# -- F19.5: web calendar month view (read-only preview, #120) ---------------
+#
+# Stitches together the weekly_plans rows for every week that overlaps the
+# selected calendar month, one entry per week in the same shape
+# GET /api/plan/week already returns (via the shared `_structured_days()`
+# helper above) — so the frontend's month view can reuse F19.4's
+# per-day/per-session rendering verbatim instead of a parallel
+# implementation (#120's acceptance criteria). Unlike /api/plan/week, a week
+# with no weekly_plans row at all is *not* a 404 here — a month is expected
+# to have some weeks unplanned (e.g. the tail end of a month bleeding into
+# next month's not-yet-generated week), so it's reported the same way as "row
+# exists but ungenerated": {generated: false, days: []}.
+
+
+def _week_view_payload(week_start: str) -> dict:
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None or not week.get("generated_structure_json"):
+        return {"week_start_date": week_start, "generated": False, "days": []}
+    return {
+        "week_start_date": week_start,
+        "generated": True,
+        "days": _structured_days(week["generated_structure_json"]),
+    }
+
+
+def _weeks_overlapping_month(month_first_day: date) -> list[str]:
+    """ISO Monday dates (oldest first) for every week whose Mon-Sun span
+    overlaps the calendar month starting on `month_first_day`."""
+    if month_first_day.month == 12:
+        next_month_first_day = date(month_first_day.year + 1, 1, 1)
+    else:
+        next_month_first_day = date(month_first_day.year, month_first_day.month + 1, 1)
+    month_last_day = next_month_first_day - timedelta(days=1)
+
+    first_week_start = _monday_on_or_before(month_first_day)
+    last_week_start = _monday_on_or_before(month_last_day)
+
+    week_starts = []
+    current = first_week_start
+    while current <= last_week_start:
+        week_starts.append(current.isoformat())
+        current += timedelta(weeks=1)
+    return week_starts
+
+
+@app.get("/api/plan/month")
+def plan_month(
+    month: str = Query(
+        ..., description="ISO 8601 year-month (YYYY-MM) for the calendar month to view."
+    ),
+) -> dict:
+    try:
+        month_first_day = date.fromisoformat(f"{month}-01")
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid month: {month!r}")
+
+    weeks = [_week_view_payload(week_start) for week_start in _weeks_overlapping_month(month_first_day)]
+    return {"month": month, "weeks": weeks}
 
 
 # -- F16.3: load actual vs. target (weekly + monthly) -----------------------

@@ -157,6 +157,24 @@ function DayCard({ dayName, dateIso, planDay }: { dayName: string; dateIso: stri
   )
 }
 
+// F19.5 (#120): pulled out of PlanView's render body so MonthView.tsx can
+// render each of the month's weeks with the exact same per-day/per-session
+// grid this week view uses, rather than a parallel implementation.
+export function WeekGrid({ weekStartIso, days }: { weekStartIso: string; days: PlanDay[] }) {
+  return (
+    <div className="grid grid-cols-7 gap-3">
+      {WEEKDAYS.map((dayName) => (
+        <DayCard
+          key={dayName}
+          dayName={dayName}
+          dateIso={dateForDay(weekStartIso, dayName)}
+          planDay={days.find((d) => d.day === dayName) ?? null}
+        />
+      ))}
+    </div>
+  )
+}
+
 type LoadState =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
@@ -223,15 +241,8 @@ function PlanView() {
       )}
 
       {state.kind === 'loaded' && (
-        <div className="mt-6 grid grid-cols-7 gap-3">
-          {WEEKDAYS.map((dayName) => (
-            <DayCard
-              key={dayName}
-              dayName={dayName}
-              dateIso={dateForDay(state.plan.week_start_date, dayName)}
-              planDay={state.plan.days.find((d) => d.day === dayName) ?? null}
-            />
-          ))}
+        <div className="mt-6">
+          <WeekGrid weekStartIso={state.plan.week_start_date} days={state.plan.days} />
         </div>
       )}
     </div>
