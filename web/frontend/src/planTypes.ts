@@ -54,3 +54,13 @@ export type WeekPlanResponse = {
   generated: boolean
   days: PlanDay[]
 }
+
+// F19.5 (#120): type for GET /api/plan/month (web/backend/main.py). One
+// entry per week overlapping the selected calendar month, in the exact same
+// shape WeekPlanResponse already uses -- the month view renders each entry
+// with F19.4's own WeekGrid (PlanView.tsx) rather than a parallel
+// per-day/per-session rendering.
+export type MonthPlanResponse = {
+  month: string
+  weeks: WeekPlanResponse[]
+}

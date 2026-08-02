@@ -14,12 +14,13 @@ afterEach(() => {
 })
 
 describe('Sidebar', () => {
-  it('renders Morning, History, and Plan, with the active view marked current', () => {
+  it('renders Morning, History, Plan, and Month, with the active view marked current', () => {
     render(<Sidebar view="morning" onNavigate={() => {}} />)
 
     expect(screen.getByRole('button', { name: 'Morning' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('button', { name: 'History' })).not.toHaveAttribute('aria-current')
     expect(screen.getByRole('button', { name: 'Plan' })).not.toHaveAttribute('aria-current')
+    expect(screen.getByRole('button', { name: 'Month' })).not.toHaveAttribute('aria-current')
   })
 
   it('calls onNavigate with the clicked view', async () => {
@@ -30,6 +31,10 @@ describe('Sidebar', () => {
     await user.click(screen.getByRole('button', { name: 'Plan' }))
 
     expect(onNavigate).toHaveBeenCalledWith('plan')
+
+    await user.click(screen.getByRole('button', { name: 'Month' }))
+
+    expect(onNavigate).toHaveBeenCalledWith('month')
   })
 
   it('toggles the dark class on <html> and persists the choice to localStorage', async () => {

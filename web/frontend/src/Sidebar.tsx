@@ -5,12 +5,16 @@ import { useTheme } from './useTheme'
 // #102's component architecture lists "Sidebar (nav + theme toggle)" as one
 // self-contained feature block); the parent owns which View is active,
 // matching how App.tsx already owned view state pre-redesign.
-export type View = 'morning' | 'history' | 'plan'
+//
+// F19.5 (#120): adds the 'month' view alongside 'plan' (the week view) --
+// the athlete can jump between the week and month calendar previews.
+export type View = 'morning' | 'history' | 'plan' | 'month'
 
 const NAV_ITEMS: { key: View; label: string }[] = [
   { key: 'morning', label: 'Morning' },
   { key: 'history', label: 'History' },
   { key: 'plan', label: 'Plan' },
+  { key: 'month', label: 'Month' },
 ]
 
 function Sidebar({
