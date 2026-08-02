@@ -66,7 +66,8 @@ The system operates across three nested planning horizons. The monthly layer has
 | **Source** | **Type** | **Key Metrics** | **Used By** |
 |----|----|----|----|
 | WHOOP API | REST / OAuth 2.0 | Recovery %, HRV, RHR, Strain, Sleep stages | Daily engine, Weekly engine, Zone calculation |
-| Strava API | REST / OAuth 2.0 | Activity type, distance, duration, HR, pace, elevation gain, splits | Session scoring, Monthly load, Zone validation |
+| intervals.icu API | REST / API key or OAuth 2.0 | Default activity-sync provider: type, distance, duration, HR, pace, elevation, splits. Also the structured-workout push target: generated target zones, durations, and work/recovery intervals land on the athlete's intervals.icu calendar for watch execution. | Session scoring, Monthly load, Zone validation, Weekly/Daily structured-plan push |
+| Strava API | REST / OAuth 2.0 | Activity type, distance, duration, HR, pace, elevation gain, splits — supported fallback provider, selectable via `athlete_profile.activity_sync_provider` | Session scoring, Monthly load, Zone validation |
 | Manual Input | CLI prompt / JSON | Muscle soreness (1–5), subjective feel, morning health check ratings | Daily engine, Weekly adaptation |
 | Training Plan | User-defined config file | Weekly session labels, target zones, periodisation phase, race dates | All three horizons |
 | Ollama (local LLM) | Local inference | Reasoning, natural language explanation, conversational queries | Recommendation layer, explanations |
@@ -242,7 +243,7 @@ The system operates across three nested planning horizons. The monthly layer has
 
 ### 6.2 Assumptions
 
-- All Coros activity data syncs to Strava automatically and is available via the Strava API within minutes of session completion.
+- All Coros activity data syncs automatically to the athlete's configured activity-sync provider — intervals.icu by default, Strava as a supported fallback (docs/adr/0025, docs/adr/0027) — and is available via that provider's API within minutes of session completion.
 
 - WHOOP provides a stable daily recovery payload by 07:00 local time after a full night of wear.
 
@@ -274,6 +275,7 @@ The system operates across three nested planning horizons. The monthly layer has
 |----|----|----|----|
 | WHOOP API deprecates or changes endpoints | High | Pin API version. Abstract all API calls behind an adapter layer. Monitor developer changelog. | Developer |
 | Strava rate limits hit during development | Medium | Cache all API responses locally. Use mock payloads for unit and integration tests. | Developer |
+| intervals.icu API behavior diverges from confirmed research (endpoint shape, auth, write/create-event format) | Medium | No adapter code written against guessed endpoint shapes — behavior confirmed live and recorded in an ADR before implementation (docs/adr/0025, docs/adr/0027), same discipline as WHOOP/Strava. Abstracted behind the same adapter interface so a divergence is isolated to one module. | Developer |
 | LLM output is inconsistent or hallucinates recommendations | High | LLM never makes decisions — it only explains deterministic outputs. Structured prompt with strict output format. | Developer |
 | SQLite schema becomes incompatible with PostgreSQL on migration | Medium | Use PostgreSQL-compatible types and constraints from day one. Run migration tests early. | Developer |
 | Subjective inputs (soreness) are inconsistent and skew decisions | Low | Log all inputs. Build trend analysis to detect anomalies. Future: prompt for rationale on extreme inputs. | Athlete |
@@ -300,6 +302,12 @@ The system operates across three nested planning horizons. The monthly layer has
 - Full decision matrix test suite and 80%+ code coverage enforced by CI.
 
 - NSDR / Yoga Nidra recommendation engine for nervous system reboot protocols — deprioritised for this milestone (docs/adr/0023), not dropped.
+
+- **intervals.icu adopted as the default activity-sync provider, Strava kept as a supported fallback** (PRD #89, F18.1–F18.6, shipped). Removes the dependency on Strava's paid-subscription tier for continued activity sync; `athlete_profile.activity_sync_provider` selects the active provider (CLI-only for now), with `sync-session` behaving identically regardless of which is active. The canonical activity/stream models and sync-adapter Protocol were renamed to provider-neutral names ahead of this (docs/adr/0025).
+
+- **Structured HR-zone training plans, calendar preview, and intervals.icu push** (PRD #111, F19.1–F19.7, in progress). Each planned session gets a generated warmup/main-set/cooldown structure (plus work/recovery intervals for HIIT) with target HR zones and durations derived from the athlete's real weekly/monthly load target and periodisation phase — not fixed numbers. The athlete previews the week and month as a calendar in the web UI, then explicitly pushes the week to their intervals.icu calendar for watch execution; a re-push updates existing calendar events rather than duplicating them (docs/adr/0027). The daily GO/MODIFY/MODALITY_SWAP/ABORT recommendation stays fully independent of the pushed plan — no automatic reconciliation. Pace/power-based target zones and structured Strength sessions are tracked as separate floating research issues, not part of this PRD's scope.
+
+- **Morning conversation (Decision Output + follow-up chat) persists within the same day** (PRD #131, in progress). Today's health-check answers, Decision Output, explanation, and follow-up chat thread survive navigating from the Morning tab to another tab and back, instead of resetting — the decision and follow-up turns are persisted server-side and rehydrated by date, consistent with the existing local-first, single-user SQLite model.
 
 ### v2.0 — Azure Web App
 
@@ -328,5 +336,6 @@ The system operates across three nested planning horizons. The monthly layer has
 | **Version** | **Date** | **Changes** | **Author** |
 |----|----|----|----|
 | 1.0 | June 2026 | Initial draft. Full discovery completed. All features defined through structured Q&A. | Mattias |
+| 1.1 | 2026-08-02 | v1.5 roadmap (§8) amended to reflect PRD #89 (intervals.icu default sync provider, Strava fallback, shipped), PRD #111 (structured HR-zone plans, calendar preview, intervals.icu push, in progress), and PRD #131 (morning conversation persistence across tab navigation, in progress). §3.2 Data Sources, §6.2 Assumptions, and §7 Risks updated to match. | Claude |
 
 *Next document: System Design Document (SDD) — architecture, module breakdown, SQLite schema, infrastructure diagram.*
