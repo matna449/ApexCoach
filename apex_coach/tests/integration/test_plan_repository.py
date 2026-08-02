@@ -94,6 +94,82 @@ def test_insert_monthly_target_rejects_duplicate_month(repo):
         repo.insert_monthly_target(month_start_date="2026-07-01")
 
 
+# -- race_goals ---------------------------------------------------------------
+
+
+def test_insert_and_get_active_race_goal(repo):
+    repo.insert_race_goal(
+        goal_distance="HALF_MARATHON", target_race_date="2026-11-01", status="ACTIVE"
+    )
+
+    goal = repo.get_active_race_goal()
+    assert goal["goal_distance"] == "HALF_MARATHON"
+    assert goal["target_race_date"] == "2026-11-01"
+    assert goal["status"] == "ACTIVE"
+
+
+def test_get_active_race_goal_returns_none_when_no_active_row(repo):
+    assert repo.get_active_race_goal() is None
+
+    repo.insert_race_goal(
+        goal_distance="5K", target_race_date="2026-09-01", status="ABANDONED"
+    )
+    assert repo.get_active_race_goal() is None
+
+
+def test_insert_race_goal_rejects_a_second_active_row(repo):
+    repo.insert_race_goal(
+        goal_distance="5K", target_race_date="2026-09-01", status="ACTIVE"
+    )
+    with pytest.raises(ValueError):
+        repo.insert_race_goal(
+            goal_distance="MARATHON", target_race_date="2027-04-01", status="ACTIVE"
+        )
+
+
+def test_insert_race_goal_allows_a_second_abandoned_row(repo):
+    repo.insert_race_goal(
+        goal_distance="5K", target_race_date="2026-09-01", status="ABANDONED"
+    )
+    # Doesn't raise -- the unique constraint only applies to ACTIVE rows.
+    repo.insert_race_goal(
+        goal_distance="10K", target_race_date="2026-10-01", status="ABANDONED"
+    )
+
+
+def test_update_race_goal_status(repo):
+    goal_id = repo.insert_race_goal(
+        goal_distance="MARATHON", target_race_date="2027-04-01", status="ACTIVE"
+    )
+
+    repo.update_race_goal_status(goal_id, "ABANDONED")
+
+    assert repo.get_active_race_goal() is None
+    # A second ACTIVE goal can now be created since the first is no longer active.
+    repo.insert_race_goal(
+        goal_distance="10K", target_race_date="2026-10-01", status="ACTIVE"
+    )
+
+
+def test_update_race_goal_status_raises_for_unknown_id(repo):
+    with pytest.raises(ValueError):
+        repo.update_race_goal_status("does-not-exist", "ABANDONED")
+
+
+def test_race_goal_distance_check_constraint_rejects_bad_value(repo):
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.insert_race_goal(
+            goal_distance="ULTRA", target_race_date="2026-09-01", status="ACTIVE"
+        )
+
+
+def test_race_goal_status_check_constraint_rejects_bad_value(repo):
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.insert_race_goal(
+            goal_distance="5K", target_race_date="2026-09-01", status="NOT_REAL"
+        )
+
+
 # -- decisions ----------------------------------------------------------------
 
 

@@ -64,6 +64,10 @@ ZONE_LABELS = {
 
 PERIODISATION_PHASES = ["BASE", "BUILD", "PEAK", "TAPER", "RECOVERY"]
 
+# PRD #138 (F20.1) — race_goals.goal_distance's enum, the set of distances
+# RACE_DISTANCE_PHASE_TEMPLATES (F20.2) will template a macro plan for.
+RACE_DISTANCE_CHOICES = ["5K", "10K", "HALF_MARATHON", "MARATHON"]
+
 # docs/adr/0024 — the Banister TRIMP formula's exponential weighting
 # constant is only calibrated for these two categories in the source
 # research.
@@ -1085,6 +1089,76 @@ def set_monthly_target(
         click.echo(f"Monthly target created for {month_start_date}.")
     else:
         click.echo(f"Monthly target updated for {month_start_date}.")
+
+
+@cli.command(name="set-race-goal")
+@click.option(
+    "--distance",
+    type=click.Choice(RACE_DISTANCE_CHOICES),
+    help="Goal race distance.",
+)
+@click.option(
+    "--race-date",
+    help="ISO 8601 date (YYYY-MM-DD) of the target race.",
+)
+@click.option(
+    "--replace",
+    is_flag=True,
+    default=False,
+    help="Mark the currently ACTIVE race goal ABANDONED and create this one in its "
+    "place. Without this flag, set-race-goal refuses to create a second ACTIVE goal.",
+)
+@click.option(
+    "--show",
+    is_flag=True,
+    default=False,
+    help="Print the currently active race goal instead of writing.",
+)
+def set_race_goal(distance: str | None, race_date: str | None, replace: bool, show: bool):
+    """Set (or view) the athlete's active race goal: a target distance and
+    race date. PRD #138's future macro-plan accept step (F20.3) will use
+    this to seed monthly targets — this ticket (F20.1) only stores and
+    shows the goal itself. At most one ACTIVE goal at a time
+    (docs/adr/0023, single-athlete system) — pass --replace to explicitly
+    supersede an existing one rather than silently overwriting it."""
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    repo = PlanRepository(engine)
+
+    if show:
+        goal = repo.get_active_race_goal()
+        if goal is None:
+            click.echo("No active race goal.")
+            return
+        click.echo(f"Goal distance: {goal['goal_distance']}")
+        click.echo(f"Target race date: {goal['target_race_date']}")
+        click.echo(f"Status: {goal['status']}")
+        return
+
+    if distance is None or race_date is None:
+        raise click.ClickException(
+            "--distance and --race-date are required (unless --show is passed "
+            "to view the active goal)."
+        )
+
+    try:
+        _date.fromisoformat(race_date)
+    except ValueError as e:
+        raise click.ClickException(
+            f"--race-date must be an ISO 8601 date (YYYY-MM-DD): {race_date!r}"
+        ) from e
+
+    existing = repo.get_active_race_goal()
+    if existing is not None:
+        if not replace:
+            raise click.ClickException(
+                f"an ACTIVE race goal already exists ({existing['goal_distance']} on "
+                f"{existing['target_race_date']}) — pass --replace to supersede it."
+            )
+        repo.update_race_goal_status(existing["id"], "ABANDONED")
+
+    repo.insert_race_goal(goal_distance=distance, target_race_date=race_date, status="ACTIVE")
+    click.echo(f"Race goal set: {distance} on {race_date}.")
 
 
 @cli.command(name="set-athlete-profile")

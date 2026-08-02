@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "monthly_targets",
     "oauth_tokens",
     "athlete_profile",
+    "race_goals",
 }
 
 
@@ -60,6 +61,35 @@ def test_daily_metrics_id_and_created_at_are_populated_by_client_side_default():
     assert row.id is not None
     assert row.created_at is not None
     assert "T" in row.created_at  # ISO 8601, not SQLite's space-separated default
+
+
+def test_race_goals_partial_unique_index_rejects_a_second_active_row():
+    """schema-level backstop for the single-active-race-goal invariant
+    (docs/adr/0023) -- PlanRepository.insert_race_goal() already enforces
+    this with a friendlier check-then-raise, but this confirms the DB
+    constraint itself holds even for a raw insert that bypasses the
+    repository layer entirely."""
+    engine = sa.create_engine("sqlite:///:memory:")
+    metadata.create_all(engine)
+
+    race_goals = metadata.tables["race_goals"]
+    with engine.begin() as conn:
+        conn.execute(
+            race_goals.insert().values(
+                goal_distance="5K", target_race_date="2026-09-01", status="ACTIVE"
+            )
+        )
+
+    with engine.connect() as conn:
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.execute(
+                race_goals.insert().values(
+                    goal_distance="MARATHON",
+                    target_race_date="2027-04-01",
+                    status="ACTIVE",
+                )
+            )
+            conn.commit()
 
 
 def test_decisions_recommendation_check_constraint_rejects_bad_value():

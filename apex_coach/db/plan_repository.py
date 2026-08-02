@@ -8,7 +8,13 @@ only settable via a dedicated targeted update.
 
 import sqlalchemy as sa
 
-from apex_coach.db.schema import athlete_profile, decisions, monthly_targets, weekly_plans
+from apex_coach.db.schema import (
+    athlete_profile,
+    decisions,
+    monthly_targets,
+    race_goals,
+    weekly_plans,
+)
 
 
 def _row_to_dict(row) -> dict:
@@ -80,6 +86,44 @@ class PlanRepository:
                 )
             ).one_or_none()
         return _row_to_dict(row) if row is not None else None
+
+    # -- race_goals -----------------------------------------------------------
+    # PRD #138: a race goal is one level up monthly_targets (Macro horizon,
+    # ADR-0002's Three-Horizon Model) -- it seeds monthly_targets rows once
+    # F20.3's accept step ships, rather than being a peer of Monthly. At
+    # most one ACTIVE row at a time (docs/adr/0023, single-athlete system);
+    # the partial unique index (schema.py's ix_race_goals_one_active) is
+    # the real guarantee, not this layer -- callers still get a friendly
+    # ValueError instead of a raw IntegrityError bubbling up.
+
+    def insert_race_goal(self, **fields) -> str:
+        if fields.get("status") == "ACTIVE" and self.get_active_race_goal() is not None:
+            raise ValueError(
+                "an ACTIVE race goal already exists -- abandon or complete it "
+                "before setting a new one"
+            )
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                race_goals.insert().values(**fields).returning(race_goals.c.id)
+            )
+            return result.scalar_one()
+
+    def get_active_race_goal(self) -> dict | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.select(race_goals).where(race_goals.c.status == "ACTIVE")
+            ).one_or_none()
+        return _row_to_dict(row) if row is not None else None
+
+    def update_race_goal_status(self, race_goal_id: str, status: str) -> None:
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                race_goals.update()
+                .where(race_goals.c.id == race_goal_id)
+                .values(status=status)
+            )
+            if result.rowcount == 0:
+                raise ValueError(f"no race_goals row for id {race_goal_id!r}")
 
     # -- decisions --------------------------------------------------------
 
