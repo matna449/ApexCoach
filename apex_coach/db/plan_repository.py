@@ -87,6 +87,33 @@ class PlanRepository:
             ).one_or_none()
         return _row_to_dict(row) if row is not None else None
 
+    def upsert_monthly_target(
+        self,
+        month_start_date: str,
+        periodisation_phase: str,
+        load_target_total: float,
+        race_date: str | None = None,
+    ) -> bool:
+        """Insert-or-update a monthly_targets row by month_start_date
+        existence — moved here from apex_coach.cli.main's
+        _upsert_monthly_target() (F19.8/F20.3) so the CLI's
+        set-monthly-target command, the web PUT endpoint, and F20.3's
+        macro-plan accept step all share exactly one implementation of this
+        branching rather than each importing across module-layering
+        boundaries (engines/web never import from cli). Returns True if a
+        new row was created, False if an existing one was updated."""
+        fields = {
+            "periodisation_phase": periodisation_phase,
+            "load_target_total": load_target_total,
+            "race_date": race_date,
+        }
+        existing = self.get_monthly_target(month_start_date)
+        if existing is None:
+            self.insert_monthly_target(month_start_date=month_start_date, **fields)
+            return True
+        self.update_monthly_target(month_start_date, **fields)
+        return False
+
     # -- race_goals -----------------------------------------------------------
     # PRD #138: a race goal is one level up monthly_targets (Macro horizon,
     # ADR-0002's Three-Horizon Model) -- it seeds monthly_targets rows once

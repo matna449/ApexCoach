@@ -1,14 +1,16 @@
-"""Macro training-block planning (PRD #138, F20.2).
+"""Macro training-block planning (PRD #138, F20.2/F20.3).
 
 Functional core, imperative shell (docs/adr/0016, reapplied per
-docs/adr/0017): every function here is pure -- no database or repository
-dependency. The orchestrator that reads activity history / writes
-race_goals+monthly_targets (F20.3) lives elsewhere and calls into this
-module, not the other way round.
+docs/adr/0017): RACE_DISTANCE_PHASE_TEMPLATES/estimate_current_weekly_load_au/
+generate_macro_plan are pure -- no database or repository dependency.
+preview_macro_plan()/accept_macro_plan() at the bottom of this module are
+the impure entry points (mirroring monthly_engine.py's own
+run_monthly_review()) -- they read activity history / existing
+race_goals+monthly_targets rows and, for accept, write them.
 
 This is the fourth, higher horizon -- Macro/Race-Goal -- above Monthly in
 the Three-Horizon Model (ADR-0002). It only ever proposes *initial* values
-for monthly_targets rows (via F20.3's accept step); it has no override
+for monthly_targets rows (via accept_macro_plan()); it has no override
 authority over the existing Daily/Weekly/Monthly hierarchy.
 """
 
@@ -194,3 +196,114 @@ def generate_macro_plan(
         )
 
     return recommendations
+
+
+# -- Orchestrator: reads/writes via the repositories (F20.3) -----------------
+#
+# Impure entry points, mirroring monthly_engine.py's own run_monthly_review()
+# -- no type hints on plan_repo/metrics_repo (same convention there), so this
+# module doesn't need to import the repository classes just for annotations.
+
+# How far back to look for "current" training load -- a documented, tunable
+# default (same treatment as the constants above), not derived from
+# anything race-specific. 8 weeks is long enough to smooth out a single bad
+# or exceptional week without diluting into stale history.
+HISTORY_WINDOW_WEEKS = 8
+
+
+def preview_macro_plan(plan_repo, metrics_repo, goal_distance: str, race_date: str, today: str) -> dict:
+    """Reads the athlete's trailing activity history and any existing
+    monthly_targets rows, calls generate_macro_plan()/
+    estimate_current_weekly_load_au() above, and returns the full proposal.
+    Writes nothing -- mirrors PRD #111's "generate is a preview, not an
+    automatic write" philosophy (generated_structure_json's persist-once
+    model). Raises ValueError (from generate_macro_plan()) if there isn't
+    enough runway for the chosen distance's minimum block length.
+
+    Each month in the returned `months` list is annotated with
+    `already_set`: True if that month already has an athlete-set
+    periodisation_phase/load_target_total that accept_macro_plan() would
+    leave untouched -- so the preview honestly shows what accept would
+    actually do, not just what the raw template proposes.
+    """
+    today_date = date.fromisoformat(today)
+    race_date_date = date.fromisoformat(race_date)
+
+    trailing_start = (today_date - timedelta(weeks=HISTORY_WINDOW_WEEKS)).isoformat()
+    recent_activities = metrics_repo.get_activities_range(trailing_start, today)
+    current_weekly_load_au = estimate_current_weekly_load_au(recent_activities)
+
+    months = generate_macro_plan(goal_distance, race_date_date, today_date, current_weekly_load_au)
+
+    annotated_months = []
+    for month in months:
+        existing = plan_repo.get_monthly_target(month["month_start_date"])
+        already_set = (
+            existing is not None
+            and existing.get("periodisation_phase") is not None
+            and existing.get("load_target_total") is not None
+        )
+        annotated_months.append({**month, "already_set": already_set})
+
+    weeks_to_race = max((race_date_date - today_date).days // 7, 0)
+
+    return {
+        "goal_distance": goal_distance,
+        "race_date": race_date,
+        "weeks_to_race": weeks_to_race,
+        "current_weekly_load_au": round(current_weekly_load_au, 1),
+        "current_phase": annotated_months[0]["periodisation_phase"] if annotated_months else None,
+        "months": annotated_months,
+    }
+
+
+def accept_macro_plan(
+    plan_repo, metrics_repo, goal_distance: str, race_date: str, today: str, replace: bool = False
+) -> dict:
+    """Re-runs preview_macro_plan() (accept-macro-plan takes the same
+    --distance/--race-date as preview-macro-plan and re-derives the
+    proposal itself, rather than depending on a separate stateful "last
+    preview" the CLI would otherwise have to persist between invocations --
+    see F20.3's own ticket for this documented choice), then writes:
+
+    - the race_goals row, via PlanRepository's insert/status-update methods
+      (F20.1) -- same single-ACTIVE-goal rule and --replace-to-supersede
+      UX as the set-race-goal CLI command, kept consistent rather than a
+      second, different collision policy.
+    - for each recommended month, PlanRepository.upsert_monthly_target()
+      (the same insert-vs-update-by-existence branching set-monthly-target
+      uses) -- UNLESS that month already has an athlete-set
+      periodisation_phase/load_target_total, in which case it's left
+      untouched and reported back with written=False rather than silently
+      skipped or clobbered.
+
+    All validation (unknown distance, race_date not after today, not
+    enough runway, an ACTIVE goal already existing without --replace)
+    happens before any write, so a rejected accept never leaves the
+    athlete goal-less (e.g. an existing goal abandoned but the replacement
+    failing validation).
+    """
+    existing_active = plan_repo.get_active_race_goal()
+    if existing_active is not None and not replace:
+        raise ValueError(
+            f"an ACTIVE race goal already exists ({existing_active['goal_distance']} on "
+            f"{existing_active['target_race_date']}) -- pass replace=True to supersede it."
+        )
+
+    preview = preview_macro_plan(plan_repo, metrics_repo, goal_distance, race_date, today)
+
+    if existing_active is not None:
+        plan_repo.update_race_goal_status(existing_active["id"], "ABANDONED")
+    plan_repo.insert_race_goal(goal_distance=goal_distance, target_race_date=race_date, status="ACTIVE")
+
+    written_months = []
+    for month in preview["months"]:
+        if month["already_set"]:
+            written_months.append({**month, "written": False})
+            continue
+        created = plan_repo.upsert_monthly_target(
+            month["month_start_date"], month["periodisation_phase"], month["load_target_total"]
+        )
+        written_months.append({**month, "written": True, "created": created})
+
+    return {**preview, "months": written_months}

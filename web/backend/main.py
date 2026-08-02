@@ -33,7 +33,6 @@ from apex_coach.cli.main import (
     SESSION_TYPES,
     _push_week,
     _resolve_todays_session,
-    _upsert_monthly_target,
     persist_decision_with_explanation,
     run_decision_pipeline,
 )
@@ -558,10 +557,12 @@ def push_week_endpoint(
 # previously CLI-only (`set-monthly-target`, F11.8/#48). These endpoints are
 # a thin HTTP wrapper around the exact same read/write path: GET reuses
 # `PlanRepository.get_monthly_target()` (same as `plan_month`/`load_monthly`
-# above), and POST reuses `_upsert_monthly_target()` (apex_coach.cli.main) —
-# the identical insert-vs-update-by-existence branching `set-monthly-target`
-# uses, extracted alongside this ticket so there is exactly one
-# implementation of that branch (docs/adr/0023).
+# above), and POST reuses `PlanRepository.upsert_monthly_target()` — the
+# identical insert-vs-update-by-existence branching `set-monthly-target`
+# uses (moved onto PlanRepository itself in F20.3 so F20.3's macro-plan
+# accept step can share it too, without an engines-module importing across
+# the cli/web layering boundary) — so there is exactly one implementation
+# of that branch (docs/adr/0023).
 
 
 @app.get("/api/plan/month/target")
@@ -607,8 +608,8 @@ def set_monthly_target_endpoint(
     ),
 ) -> dict:
     """Create (first write for `month_start`) or update (subsequent writes)
-    the monthly target, via `_upsert_monthly_target()` — no parallel
-    persistence path to `set-monthly-target`."""
+    the monthly target, via `PlanRepository.upsert_monthly_target()` — no
+    parallel persistence path to `set-monthly-target`."""
     try:
         date.fromisoformat(month_start)
     except ValueError:
@@ -626,8 +627,7 @@ def set_monthly_target_endpoint(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"invalid race_date: {request.race_date!r}")
 
-    created = _upsert_monthly_target(
-        plan_repo,
+    created = plan_repo.upsert_monthly_target(
         month_start,
         request.periodisation_phase,
         request.load_target_total,

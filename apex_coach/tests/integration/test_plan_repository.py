@@ -94,6 +94,30 @@ def test_insert_monthly_target_rejects_duplicate_month(repo):
         repo.insert_monthly_target(month_start_date="2026-07-01")
 
 
+def test_upsert_monthly_target_creates_when_no_row_exists(repo):
+    created = repo.upsert_monthly_target("2026-07-01", "BASE", 300.0, "2026-09-01")
+
+    assert created is True
+    row = repo.get_monthly_target("2026-07-01")
+    assert row["periodisation_phase"] == "BASE"
+    assert row["load_target_total"] == 300.0
+    assert row["race_date"] == "2026-09-01"
+
+
+def test_upsert_monthly_target_updates_when_row_already_exists(repo):
+    repo.insert_monthly_target(
+        month_start_date="2026-07-01", periodisation_phase="BASE", load_target_total=300.0
+    )
+
+    created = repo.upsert_monthly_target("2026-07-01", "BUILD", 400.0, None)
+
+    assert created is False
+    row = repo.get_monthly_target("2026-07-01")
+    assert row["periodisation_phase"] == "BUILD"
+    assert row["load_target_total"] == 400.0
+    assert row["race_date"] is None
+
+
 # -- race_goals ---------------------------------------------------------------
 
 

@@ -30,6 +30,7 @@ from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.schema import metadata
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.engines.daily_engine import KEY_SESSION_TYPES, make_decision
+from apex_coach.engines.macro_plan_engine import accept_macro_plan, preview_macro_plan
 from apex_coach.engines.monthly_engine import (
     calculate_weekly_target,
     load_au_for_activity,
@@ -999,32 +1000,6 @@ def push_week(week_start: str, real: bool):
     click.echo(f"Pushed {len(structured_sessions)} sessions for week starting {week_start}.")
 
 
-def _upsert_monthly_target(
-    repo: PlanRepository,
-    month_start_date: str,
-    periodisation_phase: str,
-    load_target_total: float,
-    race_date: str | None,
-) -> bool:
-    """Insert-or-update a monthly_targets row by month_start_date existence —
-    the branching logic shared by the `set-monthly-target` CLI command below
-    and `POST /api/plan/month/target` (F19.8, docs/adr/0023) so there's
-    exactly one insert-vs-update-by-existence implementation. Returns True
-    if a new row was created, False if an existing one was updated."""
-    fields = {
-        "periodisation_phase": periodisation_phase,
-        "load_target_total": load_target_total,
-        "race_date": race_date,
-    }
-
-    existing = repo.get_monthly_target(month_start_date)
-    if existing is None:
-        repo.insert_monthly_target(month_start_date=month_start_date, **fields)
-        return True
-    repo.update_monthly_target(month_start_date, **fields)
-    return False
-
-
 @cli.command(name="set-monthly-target")
 @click.option(
     "--month-start-date",
@@ -1060,7 +1035,8 @@ def set_monthly_target(
     show: bool,
 ):
     """Set (or view) a training block's monthly target: periodisation phase,
-    total load target, and race date. Writes via _upsert_monthly_target()."""
+    total load target, and race date. Writes via
+    PlanRepository.upsert_monthly_target()."""
     settings = get_settings()
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
     repo = PlanRepository(engine)
@@ -1082,8 +1058,8 @@ def set_monthly_target(
             "(unless --show is passed to view an existing target)."
         )
 
-    created = _upsert_monthly_target(
-        repo, month_start_date, periodisation_phase, load_target_total, race_date
+    created = repo.upsert_monthly_target(
+        month_start_date, periodisation_phase, load_target_total, race_date
     )
     if created:
         click.echo(f"Monthly target created for {month_start_date}.")
@@ -1159,6 +1135,105 @@ def set_race_goal(distance: str | None, race_date: str | None, replace: bool, sh
 
     repo.insert_race_goal(goal_distance=distance, target_race_date=race_date, status="ACTIVE")
     click.echo(f"Race goal set: {distance} on {race_date}.")
+
+
+@cli.command(name="preview-macro-plan")
+@click.option(
+    "--distance", required=True, type=click.Choice(RACE_DISTANCE_CHOICES), help="Goal race distance."
+)
+@click.option(
+    "--race-date", required=True, help="ISO 8601 date (YYYY-MM-DD) of the target race."
+)
+@click.option(
+    "--today",
+    default=None,
+    help="ISO 8601 date to treat as 'today' (defaults to the actual current date, UTC).",
+)
+def preview_macro_plan_command(distance: str, race_date: str, today: str | None):
+    """Preview the proposed macro training-block plan for a goal distance
+    and race date — phase and load target for every month from today
+    through the race, grounded in the athlete's recent training history
+    (PRD #138, F20.3). Writes nothing; run accept-macro-plan with the same
+    flags to write it."""
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+    metrics_repo = MetricsRepository(engine)
+
+    try:
+        preview = preview_macro_plan(plan_repo, metrics_repo, distance, race_date, today)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(
+        f"Goal: {preview['goal_distance']} on {preview['race_date']} "
+        f"({preview['weeks_to_race']} weeks away)"
+    )
+    click.echo(f"Current phase: {preview['current_phase']}")
+    click.echo(f"Estimated current weekly load: {preview['current_weekly_load_au']} AU")
+    click.echo()
+    for month in preview["months"]:
+        note = " (already set — accept would leave this month as-is)" if month["already_set"] else ""
+        click.echo(
+            f"  {month['month_start_date']}: {month['periodisation_phase']}, "
+            f"{month['load_target_total']} AU/month{note}"
+        )
+
+
+@cli.command(name="accept-macro-plan")
+@click.option(
+    "--distance", required=True, type=click.Choice(RACE_DISTANCE_CHOICES), help="Goal race distance."
+)
+@click.option(
+    "--race-date", required=True, help="ISO 8601 date (YYYY-MM-DD) of the target race."
+)
+@click.option(
+    "--replace",
+    is_flag=True,
+    default=False,
+    help="Abandon the currently ACTIVE race goal and replace it with this one — same "
+    "collision policy as set-race-goal --replace.",
+)
+@click.option(
+    "--today",
+    default=None,
+    help="ISO 8601 date to treat as 'today' (defaults to the actual current date, UTC).",
+)
+def accept_macro_plan_command(distance: str, race_date: str, replace: bool, today: str | None):
+    """Generate and immediately write the macro training-block plan: sets
+    the race goal and seeds monthly_targets for every recommended month,
+    leaving any month the athlete has already customized untouched (PRD
+    #138, F20.3). Re-derives the proposal itself from --distance/--race-date
+    rather than depending on a prior preview-macro-plan call — run
+    preview-macro-plan first if you want to review before writing."""
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+    metrics_repo = MetricsRepository(engine)
+
+    try:
+        result = accept_macro_plan(
+            plan_repo, metrics_repo, distance, race_date, today, replace=replace
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    click.echo(f"Race goal set: {distance} on {race_date}.")
+    for month in result["months"]:
+        if month["written"]:
+            action = "created" if month["created"] else "updated"
+            click.echo(
+                f"  {month['month_start_date']}: {action} → {month['periodisation_phase']}, "
+                f"{month['load_target_total']} AU/month"
+            )
+        else:
+            click.echo(f"  {month['month_start_date']}: left as-is (already set by the athlete)")
 
 
 @cli.command(name="set-athlete-profile")
