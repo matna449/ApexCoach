@@ -783,7 +783,7 @@ def generate_week_structure_command(week_start: str):
 
     Persists to weekly_plans.generated_structure_json. If a week already has
     a generated structure, prints it as-is without recomputing — explicit
-    regeneration is F19.3's job, not this command's.
+    regeneration is `regenerate-week-structure` (F19.3), not this command's.
     """
     settings = get_settings()
     engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
@@ -799,6 +799,21 @@ def generate_week_structure_command(week_start: str):
         _print_week_structure(structured)
         return
 
+    structured = _compute_week_structure(plan_repo, week_start, week)
+    plan_repo.update_weekly_plan(week_start, generated_structure_json=json.dumps(structured))
+
+    click.echo(f"Structure generated for week starting {week_start}:")
+    _print_week_structure(structured)
+
+
+def _compute_week_structure(plan_repo: PlanRepository, week_start: str, week: dict) -> list[dict]:
+    """Run the actual structure-generation logic (weekly load target,
+    periodisation phase, planned sessions -> per-day HR-zone structure).
+
+    Shared by `generate-week-structure` (skip-if-exists) and
+    `regenerate-week-structure` (always overwrite) so the generation step
+    itself isn't duplicated between the two commands.
+    """
     planned_sessions = json.loads(week["planned_sessions_json"] or "[]")
     if not planned_sessions:
         raise click.ClickException(f"no sessions planned for week_start_date {week_start!r}")
@@ -819,7 +834,7 @@ def generate_week_structure_command(week_start: str):
     )
     periodisation_phase = (month or {}).get("periodisation_phase") or "BASE"
 
-    structured = generate_week_structure(
+    return generate_week_structure(
         planned_sessions,
         weekly_load_target,
         periodisation_phase,
@@ -827,9 +842,47 @@ def generate_week_structure_command(week_start: str):
         resting_hr=profile["baseline_resting_hr"],
         sex=profile["sex"],
     )
+
+
+@cli.command(name="regenerate-week-structure")
+@click.option(
+    "--week-start",
+    required=True,
+    help="ISO 8601 date (YYYY-MM-DD) for the Monday this plan starts on.",
+)
+def regenerate_week_structure_command(week_start: str):
+    """Explicitly regenerate and overwrite the structured HR-zone breakdown
+    for an already-planned week — PRD #111, F19.3.
+
+    Unlike `generate-week-structure` (persist-once/stable), this always
+    re-runs generation against current inputs (weekly load target,
+    periodisation phase, planned sessions) and overwrites
+    weekly_plans.generated_structure_json unconditionally. This is the only
+    sanctioned way to change an already-generated week's structure.
+
+    If the week has already been pushed to intervals.icu (tracked via
+    weekly_plans.pushed_event_ids_json), warns that the watch/calendar will
+    be stale until the week is re-pushed with `push-week`.
+    """
+    settings = get_settings()
+    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    plan_repo = PlanRepository(engine)
+
+    week = plan_repo.get_weekly_plan(week_start)
+    if week is None:
+        raise click.ClickException(f"no weekly plan stored for week_start_date {week_start!r}")
+
+    existing_event_ids = json.loads(week.get("pushed_event_ids_json") or "{}")
+    if existing_event_ids:
+        click.echo(
+            f"Warning: week starting {week_start} was already pushed to intervals.icu — "
+            "the watch/calendar will be stale until you run `push-week` again."
+        )
+
+    structured = _compute_week_structure(plan_repo, week_start, week)
     plan_repo.update_weekly_plan(week_start, generated_structure_json=json.dumps(structured))
 
-    click.echo(f"Structure generated for week starting {week_start}:")
+    click.echo(f"Structure regenerated for week starting {week_start}:")
     _print_week_structure(structured)
 
 
