@@ -1,14 +1,16 @@
+import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
+import sqlalchemy as sa
 from sqlalchemy import pool
 
 from alembic import context
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from apex_coach.config.settings import normalize_database_url  # noqa: E402
 from apex_coach.db.schema import metadata as apex_coach_metadata  # noqa: E402
 
 # this is the Alembic Config object, which provides
@@ -28,6 +30,17 @@ target_metadata = apex_coach_metadata
 # ... etc.
 
 
+def _database_url() -> str:
+    """The `alembic` command honours DATABASE_URL. Programmatic callers (no
+    cmd_opts) have set sqlalchemy.url themselves, and that must win: settings
+    loads .env into the environment, which would otherwise point a test's
+    temporary database at the real one."""
+    env_url = os.getenv("DATABASE_URL")
+    if env_url and config.cmd_opts is not None:
+        return normalize_database_url(env_url)
+    return config.get_main_option("sqlalchemy.url")
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -40,9 +53,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -59,11 +71,7 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = sa.create_engine(_database_url(), poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

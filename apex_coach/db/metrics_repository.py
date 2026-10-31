@@ -13,6 +13,7 @@ racing a check-then-act would both see no row and both attempt insert.
 import sqlalchemy as sa
 
 from apex_coach.db.schema import activities, daily_metrics, hr_zones, session_scores
+from apex_coach.db.upsert import dialect_insert
 
 _DAILY_METRICS_IMMUTABLE_FIELDS = {"id", "date", "created_at"}
 
@@ -41,7 +42,7 @@ class MetricsRepository:
         if invalid:
             raise ValueError(f"cannot set immutable field(s): {sorted(invalid)}")
 
-        stmt = sa.dialects.sqlite.insert(daily_metrics).values(date=date, **fields)
+        stmt = dialect_insert(self._engine, daily_metrics).values(date=date, **fields)
         update_columns = {name: stmt.excluded[name] for name in fields}
         stmt = stmt.on_conflict_do_update(
             index_elements=[daily_metrics.c.date],
@@ -94,7 +95,7 @@ class MetricsRepository:
                 "rpe is set via update_activity_rpe(), not save_activity() — "
                 "a Strava resync must never overwrite athlete-entered RPE"
             )
-        stmt = sa.dialects.sqlite.insert(activities).values(**fields)
+        stmt = dialect_insert(self._engine, activities).values(**fields)
         update_columns = {
             col.name: stmt.excluded[col.name]
             for col in activities.columns

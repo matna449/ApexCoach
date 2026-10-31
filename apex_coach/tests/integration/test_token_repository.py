@@ -10,10 +10,8 @@ ENCRYPTION_KEY = "test-passphrase-not-for-production"
 
 
 @pytest.fixture
-def repo():
-    engine = sa.create_engine("sqlite:///:memory:")
-    metadata.create_all(engine)
-    return TokenRepository(engine, ENCRYPTION_KEY)
+def repo(repository_engine):
+    return TokenRepository(repository_engine, ENCRYPTION_KEY)
 
 
 def _future_iso(seconds: int) -> str:

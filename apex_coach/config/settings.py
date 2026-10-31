@@ -24,10 +24,21 @@ class Settings:
     strava_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
 
 
+def normalize_database_url(url: str) -> str:
+    """Neon and Vercel hand out postgres:// or postgresql:// URLs; SQLAlchemy
+    needs the psycopg driver named explicitly."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url.removeprefix(prefix)
+    return url
+
+
 def get_settings() -> Settings:
     return Settings(
         apex_encryption_key=os.environ["APEX_ENCRYPTION_KEY"],
-        database_url=os.getenv("DATABASE_URL", "sqlite:///./apex_coach.db"),
+        database_url=normalize_database_url(
+            os.getenv("DATABASE_URL", "sqlite:///./apex_coach.db")
+        ),
         whoop_client_id=os.getenv("WHOOP_CLIENT_ID"),
         whoop_client_secret=os.getenv("WHOOP_CLIENT_SECRET"),
         whoop_redirect_uri=os.getenv(

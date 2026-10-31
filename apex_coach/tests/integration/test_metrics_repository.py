@@ -1,17 +1,13 @@
 import pytest
 import sqlalchemy as sa
 
-from apex_coach.db.engine import create_engine
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.schema import activities as activities_table
-from apex_coach.db.schema import metadata
 
 
 @pytest.fixture
-def repo():
-    engine = create_engine(":memory:")
-    metadata.create_all(engine)
-    return MetricsRepository(engine)
+def repo(repository_engine):
+    return MetricsRepository(repository_engine)
 
 
 # -- daily_metrics --------------------------------------------------------

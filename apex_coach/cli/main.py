@@ -144,13 +144,13 @@ def zones(max_hr: int, resting_hr: int):
 
 @cli.command(name="init-db")
 def init_db():
-    """Create the SQLite schema (all tables in db/schema.py) if it doesn't
+    """Create the database schema (all tables in db/schema.py) if it doesn't
     already exist. Run this once before connect-whoop or any other command
     that touches the database — nothing else creates the schema."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     metadata.create_all(engine)
-    click.echo(f"Database initialized at {settings.database_url}")
+    click.echo(f"Database initialized at {engine.url.render_as_string(hide_password=True)}")
 
 
 @cli.command(name="connect-whoop")
@@ -172,7 +172,7 @@ def connect_whoop():
     except AdapterError as e:
         raise click.ClickException(str(e)) from e
 
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     token_repo = TokenRepository(engine, settings.apex_encryption_key)
     expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
@@ -206,7 +206,7 @@ def connect_strava():
     except AdapterError as e:
         raise click.ClickException(str(e)) from e
 
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     token_repo = TokenRepository(engine, settings.apex_encryption_key)
     expires_at = datetime.fromtimestamp(tokens["expires_at"], tz=timezone.utc).isoformat()
     token_repo.save_token(
@@ -232,7 +232,7 @@ def connect_intervals_icu(api_key: str):
     handshake — this is a static, long-lived credential, encrypted at rest
     via the same TokenRepository WHOOP/Strava tokens use."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     token_repo = TokenRepository(engine, settings.apex_encryption_key)
     token_repo.save_token(
         provider="INTERVALS_ICU",
@@ -268,7 +268,7 @@ def whoop_smoke(date: str | None, real: bool):
         settings = get_settings()
         if not settings.whoop_client_id or not settings.whoop_client_secret:
             raise click.ClickException("WHOOP_CLIENT_ID / WHOOP_CLIENT_SECRET not set in .env.")
-        engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+        engine = create_engine(settings.database_url)
         token_repo = TokenRepository(engine, settings.apex_encryption_key)
         adapter = RealWhoopAdapter(token_repo, settings.whoop_client_id, settings.whoop_client_secret)
     else:
@@ -313,7 +313,7 @@ def strava_smoke(since_ts: int, real: bool):
         settings = get_settings()
         if not settings.strava_client_id or not settings.strava_client_secret:
             raise click.ClickException("STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET not set in .env.")
-        engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+        engine = create_engine(settings.database_url)
         token_repo = TokenRepository(engine, settings.apex_encryption_key)
         adapter = RealStravaAdapter(
             token_repo, settings.strava_client_id, settings.strava_client_secret
@@ -372,7 +372,7 @@ def morning_check(session_type: str, date: str | None):
             click.echo(f"  - {reason}")
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     repo = MetricsRepository(engine)
     persist_health_check(repo, date, result)
 
@@ -560,7 +560,7 @@ def sync_session(
     a fresh session_scores row (append-only, ADR-0006).
     """
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     repo = MetricsRepository(engine)
     plan_repo = PlanRepository(engine)
     profile = plan_repo.get_athlete_profile()
@@ -726,7 +726,7 @@ def plan_week(
     or overwrites planned_sessions_json in place if it has.
     """
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
 
     if show:
@@ -795,7 +795,7 @@ def generate_week_structure_command(week_start: str):
     regeneration is `regenerate-week-structure` (F19.3), not this command's.
     """
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
 
     week = plan_repo.get_weekly_plan(week_start)
@@ -874,7 +874,7 @@ def regenerate_week_structure_command(week_start: str):
     be stale until the week is re-pushed with `push-week`.
     """
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
 
     week = plan_repo.get_weekly_plan(week_start)
@@ -992,7 +992,7 @@ def push_week(week_start: str, real: bool):
     not a duplicate.
     """
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
 
     structured_sessions, updated_event_ids = _push_week(plan_repo, engine, settings, week_start, real)
@@ -1042,7 +1042,7 @@ def set_monthly_target(
     total load target, and race date. Writes via
     PlanRepository.upsert_monthly_target()."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     repo = PlanRepository(engine)
 
     if show:
@@ -1102,7 +1102,7 @@ def set_race_goal(distance: str | None, race_date: str | None, replace: bool, sh
     (docs/adr/0023, single-athlete system) — pass --replace to explicitly
     supersede an existing one rather than silently overwriting it."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     repo = PlanRepository(engine)
 
     if show:
@@ -1163,7 +1163,7 @@ def preview_macro_plan_command(distance: str, race_date: str, today: str | None)
         today = datetime.now(timezone.utc).date().isoformat()
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
     metrics_repo = MetricsRepository(engine)
 
@@ -1217,7 +1217,7 @@ def accept_macro_plan_command(distance: str, race_date: str, replace: bool, toda
         today = datetime.now(timezone.utc).date().isoformat()
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
     metrics_repo = MetricsRepository(engine)
 
@@ -1273,7 +1273,7 @@ def regenerate_macro_plan_command(distance: str, race_date: str, today: str | No
         today = datetime.now(timezone.utc).date().isoformat()
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
     metrics_repo = MetricsRepository(engine)
 
@@ -1336,7 +1336,7 @@ def set_athlete_profile(
     (docs/adr/0023). Writes via PlanRepository.insert_athlete_profile()
     on first write, update_athlete_profile() thereafter."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     repo = PlanRepository(engine)
 
     if show:
@@ -1606,7 +1606,7 @@ def morning(date: str | None, session_type: str | None, real: bool):
         date = datetime.now(timezone.utc).date().isoformat()
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     metrics_repo = MetricsRepository(engine)
     plan_repo = PlanRepository(engine)
 
@@ -1760,7 +1760,7 @@ def weekly_summary(week_start: str, today: str | None):
         today = datetime.now(timezone.utc).date().isoformat()
 
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
     metrics_repo = MetricsRepository(engine)
 
@@ -1900,7 +1900,7 @@ def monthly_summary(month_start_date: str, today: str | None):
     persist load_actual_total/hrv_trend_json/month_summary_json back to
     monthly_targets, and print a human-readable summary (Logic Spec §5.3)."""
     settings = get_settings()
-    engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+    engine = create_engine(settings.database_url)
     plan_repo = PlanRepository(engine)
     metrics_repo = MetricsRepository(engine)
 
