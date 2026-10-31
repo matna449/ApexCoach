@@ -11,7 +11,7 @@ Run from the repo root so `apex_coach` resolves on the Python path (mirrors
 
 Config is loaded the exact same way the CLI loads it — see
 `apex_coach/config/settings.py` and `apex_coach/cli/main.py`
-(`create_engine(settings.database_url.removeprefix("sqlite:///"))`). Endpoint
+(`create_engine(settings.database_url)`). Endpoint
 handlers added by later tickets should follow that same pattern.
 """
 
@@ -53,7 +53,7 @@ from apex_coach.services.health_check import (
 # but confirms the config-loading pattern is wired up correctly for later
 # tickets to build on.
 settings = get_settings()
-engine = create_engine(settings.database_url.removeprefix("sqlite:///"))
+engine = create_engine(settings.database_url)
 plan_repo = PlanRepository(engine)
 metrics_repo = MetricsRepository(engine)
 

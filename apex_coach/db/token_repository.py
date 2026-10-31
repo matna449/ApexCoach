@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 from apex_coach.db.schema import oauth_tokens
+from apex_coach.db.upsert import dialect_insert
 
 # Domain-separation salt for a single-secret, single-machine KDF input — not a
 # password hash defending against rainbow tables across many users. See ADR-0005.
@@ -45,7 +46,7 @@ class TokenRepository:
         expires_at: str,
         scope: str,
     ) -> None:
-        stmt = sa.dialects.sqlite.insert(oauth_tokens).values(
+        stmt = dialect_insert(self._engine, oauth_tokens).values(
             provider=provider,
             access_token=self._fernet.encrypt(access_token.encode("utf-8")).decode(
                 "utf-8"

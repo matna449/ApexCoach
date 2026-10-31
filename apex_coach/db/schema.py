@@ -258,6 +258,7 @@ sa.Index(
     race_goals.c.status,
     unique=True,
     sqlite_where=race_goals.c.status == "ACTIVE",
+    postgresql_where=race_goals.c.status == "ACTIVE",
 )
 
 # Single-row athlete config (docs/adr/0023: single-user, no per-athlete

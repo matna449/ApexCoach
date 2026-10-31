@@ -3,6 +3,7 @@ testpaths = ["apex_coach/tests"]
 pythonpath = ["."]
 markers = [
     "live_llm: requires a running local Ollama instance with llama3.1:8b pulled; skipped by default, run with --run-live-llm",
+    "postgres: requires a throwaway Postgres database in APEX_TEST_POSTGRES_URL, which gets wiped; skipped by default, run with --run-postgres",
 ]
 
 [tool.coverage.run]
