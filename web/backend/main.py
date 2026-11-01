@@ -48,7 +48,13 @@ from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.token_repository import TokenRepository
 from apex_coach.db.webhook_repository import ERROR, WebhookEventRepository
-from apex_coach.services.whoop_sync import is_valid_signature, process_event
+from apex_coach.services.whoop_sync import (
+    RECONCILE_DEFAULT_DAYS,
+    RECONCILE_MAX_DAYS,
+    is_valid_signature,
+    process_event,
+    reconcile,
+)
 from apex_coach.services.whoop_oauth import (
     InvalidOAuthStateError,
     complete_authorization,
@@ -101,6 +107,18 @@ def health() -> dict[str, str]:
 # -- start has its own admin key, and the callback needs a single-use state. ------
 
 
+def _timezone() -> ZoneInfo:
+    return ZoneInfo(settings.apex_timezone)
+
+
+def _hosted_whoop_adapter() -> RealWhoopAdapter:
+    return RealWhoopAdapter(
+        TokenRepository(engine, settings.apex_encryption_key),
+        settings.whoop_client_id,
+        settings.whoop_client_secret,
+    )
+
+
 def _require_whoop_credentials() -> None:
     if not settings.whoop_client_id or not settings.whoop_client_secret:
         raise HTTPException(status_code=503, detail="WHOOP credentials are not configured.")
@@ -145,6 +163,13 @@ def whoop_oauth_callback(
         return HTMLResponse("<h1>WHOOP not connected</h1><p>Unknown or expired state.</p>", 400)
     except AdapterError:
         return HTMLResponse("<h1>WHOOP not connected</h1><p>Token exchange failed.</p>", 502)
+
+    # Synchronous like the webhook, see docs/adr/0028. If it fails, the
+    # connection stands and the cron can run with ?days=30.
+    try:
+        reconcile(_hosted_whoop_adapter(), metrics_repo, _timezone(), days=RECONCILE_MAX_DAYS)
+    except AdapterError as e:
+        logger.warning("WHOOP backfill failed: %s", e)
     return HTMLResponse("<h1>WHOOP connected</h1><p>You can close this page.</p>")
 
 
@@ -179,22 +204,58 @@ def whoop_webhook(
     if not events.record_received(trace_id, event_type, record_id):
         return {"status": "duplicate"}
 
-    whoop = RealWhoopAdapter(
-        TokenRepository(engine, settings.apex_encryption_key),
-        settings.whoop_client_id,
-        settings.whoop_client_secret,
-    )
+    # A failure is stored on the event, and the daily reconcile tries again.
+    return {"status": _process_stored_event(events, trace_id, event_type, record_id)}
+
+
+def _process_stored_event(
+    events: WebhookEventRepository, trace_id: str, event_type: str, record_id: str
+) -> str:
     try:
         status = process_event(
-            event_type, record_id, whoop, metrics_repo, ZoneInfo(settings.apex_timezone)
+            event_type, record_id, _hosted_whoop_adapter(), metrics_repo, _timezone()
         )
     except AdapterError as e:
-        # The event is stored, and the daily reconcile fetches the data anyway.
         logger.warning("WHOOP event %s failed: %s", trace_id, e)
         events.mark(trace_id, ERROR, str(e))
-        return {"status": ERROR}
+        return ERROR
     events.mark(trace_id, status)
-    return {"status": status}
+    return status
+
+
+# -- F21.5: daily reconcile (F21 spec §8). Public in web/backend/auth.py: it has --
+# -- its own CRON_SECRET, which Vercel sends as a bearer token. -------------------
+
+
+@app.get("/api/cron/whoop-reconcile")
+def whoop_reconcile(
+    days: int = Query(default=RECONCILE_DEFAULT_DAYS, ge=1),
+    authorization: str = Header(default=""),
+) -> dict[str, int]:
+    if not settings.cron_secret:
+        raise HTTPException(status_code=503, detail="CRON_SECRET is not configured.")
+    expected = f"Bearer {settings.cron_secret}"
+    if not hmac.compare_digest(authorization.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Missing or invalid cron secret.")
+    _require_whoop_credentials()
+
+    purged = TokenRepository(engine, settings.apex_encryption_key).purge_expired_pending_states()
+    try:
+        counts = reconcile(
+            _hosted_whoop_adapter(),
+            metrics_repo,
+            _timezone(),
+            days=min(days, RECONCILE_MAX_DAYS),
+        )
+    except AdapterError as e:
+        logger.error("WHOOP reconcile failed: %s", e)
+        raise HTTPException(status_code=502, detail="WHOOP reconcile failed.") from e
+
+    events = WebhookEventRepository(engine)
+    unfinished = events.get_unfinished()
+    for event in unfinished:
+        _process_stored_event(events, event["trace_id"], event["type"], event["record_id"])
+    return {**counts, "events_reprocessed": len(unfinished), "pending_states_purged": purged}
 
 
 # -- F17.1: morning context (WHOOP fetch + session resolution + question --

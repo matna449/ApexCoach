@@ -20,6 +20,8 @@ from apex_coach.services.whoop_day_mapping import cycle_date, sleep_date, sleep_
 # WHOOP's docs give no window. Our choice, see F21 spec §6.
 SIGNATURE_TOLERANCE_MS = 5 * 60 * 1000
 STRAIN_LOOKBACK = timedelta(hours=48)
+RECONCILE_DEFAULT_DAYS = 3
+RECONCILE_MAX_DAYS = 30
 
 SCORED = "SCORED"
 PENDING_SCORE = "PENDING_SCORE"
@@ -113,11 +115,7 @@ def _sync_sleep(sleep_id: str, whoop, metrics, tz: ZoneInfo, now_fn) -> str:
         metrics.upsert_daily_metrics(date, **_recovery_fields(recovery), **synced)
 
     # WHOOP has no cycle webhook, so strain comes along with sleep and recovery.
-    for cycle in whoop.get_cycles(start=(now_fn() - STRAIN_LOOKBACK).isoformat()):
-        if cycle["score_state"] == PENDING_SCORE:
-            continue
-        strain = cycle["score"]["strain"] if cycle["score_state"] == SCORED else None
-        metrics.upsert_daily_metrics(cycle_date(cycle, tz), whoop_strain=strain, **synced)
+    _sync_strain(whoop.get_cycles((now_fn() - STRAIN_LOOKBACK).isoformat()), metrics, tz, synced)
     return status
 
 
@@ -148,3 +146,57 @@ def process_event(
     if event_type in ("sleep.deleted", "recovery.deleted"):
         return _clear_sleep(record_id, metrics, now_fn)
     return IGNORED
+
+
+def _sync_strain(cycles: list[dict], metrics, tz: ZoneInfo, synced: dict) -> None:
+    for cycle in cycles:
+        if cycle["score_state"] == PENDING_SCORE:
+            continue
+        strain = cycle["score"]["strain"] if cycle["score_state"] == SCORED else None
+        metrics.upsert_daily_metrics(cycle_date(cycle, tz), whoop_strain=strain, **synced)
+
+
+def reconcile(
+    whoop: RealWhoopAdapter,
+    metrics: MetricsRepository,
+    tz: ZoneInfo,
+    days: int = RECONCILE_DEFAULT_DAYS,
+    now_fn: Callable[[], datetime] = _now,
+) -> dict[str, int]:
+    """Re-fetches the last local days by range, so a missed webhook costs nothing."""
+    now = now_fn()
+    today = now.astimezone(tz).date()
+    first_day = (today - timedelta(days=days - 1)).isoformat()
+    # A sleep ending on the first day started the evening before, and a cycle's
+    # date can be the day after its start.
+    start = (
+        datetime.combine(today - timedelta(days=days), datetime.min.time(), tzinfo=tz)
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
+    synced = {"whoop_synced_at": now.isoformat()}
+
+    main_sleeps: dict[str, dict] = {}
+    for sleep in whoop.get_sleeps(start):
+        if sleep.get("nap") or sleep.get("end") is None or sleep["score_state"] == PENDING_SCORE:
+            continue
+        date = sleep_date(sleep, tz)
+        if date >= first_day and (
+            date not in main_sleeps or sleep_duration(sleep) > sleep_duration(main_sleeps[date])
+        ):
+            main_sleeps[date] = sleep
+
+    recoveries = {r["sleep_id"]: r for r in whoop.get_recoveries(start)}
+    counts = {"sleeps": 0, "recoveries": 0, "cycles": 0}
+    for date, sleep in main_sleeps.items():
+        metrics.upsert_daily_metrics(date, **_sleep_fields(sleep), **synced)
+        counts["sleeps"] += 1
+        recovery = recoveries.get(sleep["id"])
+        if recovery is not None and recovery["score_state"] != PENDING_SCORE:
+            metrics.upsert_daily_metrics(date, **_recovery_fields(recovery), **synced)
+            counts["recoveries"] += 1
+
+    cycles = [c for c in whoop.get_cycles(start) if cycle_date(c, tz) >= first_day]
+    _sync_strain(cycles, metrics, tz, synced)
+    counts["cycles"] = len(cycles)
+    return counts

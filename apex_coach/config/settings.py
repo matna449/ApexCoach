@@ -24,6 +24,7 @@ class Settings:
     strava_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
     apex_api_key: str | None = None
     apex_admin_key: str | None = None
+    cron_secret: str | None = None
     allow_unauthenticated: bool = False
     apex_timezone: str = "Europe/Stockholm"
 
@@ -55,6 +56,7 @@ def get_settings() -> Settings:
         ),
         apex_api_key=os.getenv("APEX_API_KEY"),
         apex_admin_key=os.getenv("APEX_ADMIN_KEY"),
+        cron_secret=os.getenv("CRON_SECRET"),
         apex_timezone=os.getenv("APEX_TIMEZONE", "Europe/Stockholm"),
         # Local development only, where the React frontend sends no key.
         allow_unauthenticated=(

@@ -323,18 +323,24 @@ class RealWhoopAdapter:
     def get_recovery_for_cycle(self, cycle_id: int) -> dict | None:
         return self._get_without_waiting(f"/developer/v2/cycle/{cycle_id}/recovery")
 
-    def get_cycles(self, start: str, end: str | None = None) -> list[dict]:
+    def _get_collection(self, path: str, start: str) -> list[dict]:
         params = {"start": start, "limit": 25}
-        if end is not None:
-            params["end"] = end
-
         records = []
         while True:
-            page = self._get_without_waiting("/developer/v2/cycle", params)
+            page = self._get_without_waiting(path, params)
             records.extend(page["records"])
             if not page.get("next_token"):
                 return records
             params = {**params, "nextToken": page["next_token"]}
+
+    def get_cycles(self, start: str) -> list[dict]:
+        return self._get_collection("/developer/v2/cycle", start)
+
+    def get_sleeps(self, start: str) -> list[dict]:
+        return self._get_collection("/developer/v2/activity/sleep", start)
+
+    def get_recoveries(self, start: str) -> list[dict]:
+        return self._get_collection("/developer/v2/recovery", start)
 
     def get_daily_payload(self, date: str) -> WhoopDailyPayload:
         # Validate each record immediately after fetching it, not after all

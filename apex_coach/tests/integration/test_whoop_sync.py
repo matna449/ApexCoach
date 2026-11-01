@@ -294,5 +294,5 @@ def test_cycles_follow_pagination(adapter, httpx_mock):
     httpx_mock.add_response(url=first, json={"records": [_cycle(id=1)], "next_token": "abc"})
     httpx_mock.add_response(url=first, json={"records": [_cycle(id=2)], "next_token": None})
 
-    assert [c["id"] for c in adapter.get_cycles(start="2026-06-21T00:00:00+00:00")] == [1, 2]
+    assert [c["id"] for c in adapter.get_cycles("2026-06-21T00:00:00+00:00")] == [1, 2]
     assert "nextToken=abc" in str(httpx_mock.get_requests()[1].url)
