@@ -14,6 +14,8 @@ IGNORED = "ignored"
 ERROR = "error"
 
 _FINISHED = {PROCESSED, IGNORED}
+# One reconcile run stays well inside the function's time limit.
+UNFINISHED_BATCH = 50
 
 
 def _now_iso() -> str:
@@ -52,6 +54,16 @@ class WebhookEventRepository:
                     processed_at=_now_iso() if status in _FINISHED else None,
                 )
             )
+
+    def get_unfinished(self) -> list[dict]:
+        with self._engine.begin() as conn:
+            rows = conn.execute(
+                sa.select(whoop_webhook_events)
+                .where(whoop_webhook_events.c.status.not_in(_FINISHED))
+                .order_by(whoop_webhook_events.c.received_at)
+                .limit(UNFINISHED_BATCH)
+            ).all()
+        return [dict(row._mapping) for row in rows]
 
     def get(self, trace_id: str) -> dict | None:
         with self._engine.begin() as conn:

@@ -5,5 +5,8 @@
       "maxDuration": 60,
       "excludeFiles": "{apex_coach/tests/**,web/frontend/**,docs/**,scripts/**}"
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/cron/whoop-reconcile", "schedule": "30 5 * * *" }
+  ]
 }

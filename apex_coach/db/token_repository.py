@@ -195,6 +195,13 @@ class TokenRepository:
         age = datetime.now(timezone.utc) - datetime.fromisoformat(row.created_at)
         return self._decrypt(row.code_verifier) if age <= PENDING_STATE_TTL else None
 
+    def purge_expired_pending_states(self) -> int:
+        cutoff = (datetime.now(timezone.utc) - PENDING_STATE_TTL).isoformat()
+        with self._engine.begin() as conn:
+            return conn.execute(
+                oauth_pending_states.delete().where(oauth_pending_states.c.created_at < cutoff)
+            ).rowcount
+
     def _encrypt(self, value: str) -> str:
         return self._fernet.encrypt(value.encode("utf-8")).decode("utf-8")
 

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import importlib
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
@@ -13,7 +14,7 @@ import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 
-from apex_coach.adapters.whoop_adapter import WHOOP_TOKEN_URL
+from apex_coach.adapters.whoop_adapter import WHOOP_BASE_URL, WHOOP_TOKEN_URL
 from apex_coach.db.engine import create_engine
 from apex_coach.db.schema import metadata, oauth_pending_states, oauth_tokens
 from apex_coach.db.token_repository import TokenRepository
@@ -54,6 +55,20 @@ def client(engine):
     return _client(engine)
 
 
+def _mock_token_exchange(httpx_mock):
+    httpx_mock.add_response(method="POST", url=WHOOP_TOKEN_URL, json=TOKEN_RESPONSE)
+    # The backfill that follows a successful connection.
+    httpx_mock.add_response(
+        url=re.compile(re.escape(f"{WHOOP_BASE_URL}/developer/v2/") + ".*"),
+        json={"records": [], "next_token": None},
+        is_reusable=True,
+    )
+
+
+def _token_requests(httpx_mock):
+    return [r for r in httpx_mock.get_requests() if r.method == "POST"]
+
+
 def _start(client):
     response = client.get("/auth/whoop/start", params={"key": ADMIN_KEY})
     assert response.status_code == 302
@@ -91,7 +106,7 @@ def test_start_fails_closed_without_an_admin_key(engine):
 
 
 def test_valid_callback_saves_the_token_encrypted(client, engine, httpx_mock):
-    httpx_mock.add_response(method="POST", url=WHOOP_TOKEN_URL, json=TOKEN_RESPONSE)
+    _mock_token_exchange(httpx_mock)
     state = _start(client)["state"][0]
 
     response = client.get("/auth/whoop/callback", params={"code": "code-1", "state": state})
@@ -103,7 +118,7 @@ def test_valid_callback_saves_the_token_encrypted(client, engine, httpx_mock):
     assert "access-1" not in row.access_token and "refresh-1" not in row.refresh_token
     token = TokenRepository(engine, ENCRYPTION_KEY).get_token("WHOOP")
     assert (token["access_token"], token["refresh_token"]) == ("access-1", "refresh-1")
-    body = httpx_mock.get_requests()[0].content
+    body = _token_requests(httpx_mock)[0].content
     assert b"code_verifier=" in body and b"code=code-1" in body
 
 
@@ -128,12 +143,12 @@ def test_callback_with_expired_state_is_400(client, engine):
 
 
 def test_state_is_single_use(client, httpx_mock):
-    httpx_mock.add_response(method="POST", url=WHOOP_TOKEN_URL, json=TOKEN_RESPONSE)
+    _mock_token_exchange(httpx_mock)
     params = {"code": "c", "state": _start(client)["state"][0]}
 
     assert client.get("/auth/whoop/callback", params=params).status_code == 200
     assert client.get("/auth/whoop/callback", params=params).status_code == 400
-    assert len(httpx_mock.get_requests()) == 1
+    assert len(_token_requests(httpx_mock)) == 1
 
 
 def test_error_from_whoop_is_400_and_escaped_with_no_token_write(client, engine):
