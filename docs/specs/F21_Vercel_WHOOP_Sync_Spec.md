@@ -42,7 +42,7 @@ Non-negotiables carried over from the repo:
 | 15 | `config/settings.py` | `whoop_redirect_uri` default = GitHub Pages copy-paste page; `APEX_ENCRYPTION_KEY` read via `os.environ[...]` at import of `main.py` (module-level `settings = get_settings()`) | New settings fields (§3.2); default redirect unchanged for CLI |
 | 16 | `main.py` CORS | `allow_origins=["http://localhost:5173"]` only | Add `APEX_CORS_ORIGINS` env (comma list); new agent endpoints are server-to-server, no CORS needed |
 | 17 | `WHOOP_SCOPE` | `"read:recovery read:cycles read:sleep offline"` — no `read:workout` | `workout.*` webhooks are acknowledged and ignored in F21 (no scope change) |
-| 18 | `web/backend/main.py` | No authentication on any route (only CORS, which does not stop direct requests). `api/index.py` would publish health data and writes such as `POST /api/plan/week/push`, plus `/docs`, `/redoc` and `/openapi.json` | Default-deny API auth, §3.3 (F21.2) |
+| 18 | `web/backend/main.py` | No authentication on any route (only CORS, which does not stop direct requests). Deploying would publish health data and writes such as `POST /api/plan/week/push`, plus `/docs`, `/redoc` and `/openapi.json` | Default-deny API auth, §3.3 (F21.2) |
 | 19 | `cli/main.py:456`, `cli/main.py:479` | intervals.icu key is only read from `oauth_tokens`, stored by the interactive `connect-intervals-icu` | Optional `INTERVALS_ICU_API_KEY` env var that takes precedence, §3.4 (F21.9) |
 
 Existing pieces to **reuse**: `oauth_pkce.generate_pkce_pair/generate_state`, `whoop_adapter.build_authorization_url/exchange_code_for_tokens/refresh_tokens`, `TokenRepository` (encryption), `MetricsRepository.upsert_daily_metrics/get_daily_metrics_range`, `services/hrv_trend.compute_hrv_30d_avg`, `services/health_check` fixed keys (`muscle_soreness`, `subjective_energy`, `sleep_quality_felt`) + `persist_health_check`, `GET /api/health` (liveness), `GET /api/trends/hrv`.
@@ -50,12 +50,11 @@ Existing pieces to **reuse**: `oauth_pkce.generate_pkce_pair/generate_state`, `w
 ## 3. Deployment (Vercel)
 
 ### 3.1 Layout
-- Vercel Python runtime, Fluid compute on. Entry `api/index.py` **(new)**: `from web.backend.main import app` (ASGI). Repo root = project root so `apex_coach` is importable.
+- Vercel Python runtime, Fluid compute on. Entry: `[tool.vercel] entrypoint = "web.backend.main:app"` in `pyproject.toml`, Vercel's documented setting for a FastAPI app outside its default entrypoint paths; no `api/index.py` or rewrites. Repo root = project root so `apex_coach` is importable.
 - `vercel.json` **(new)**:
 ```json
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
-  "functions": { "api/index.py": { "maxDuration": 60 } },
+  "functions": { "web/backend/main.py": { "maxDuration": 60 } },
   "crons": [{ "path": "/api/cron/whoop-reconcile", "schedule": "30 5 * * *" }]
 }
 ```
@@ -82,7 +81,7 @@ Existing pieces to **reuse**: `oauth_pkce.generate_pkce_pair/generate_state`, `w
 Applies to every route in the app, existing and new.
 
 - `web/backend/auth.py` **(new)**: `require_api_key` dependency, attached globally with `FastAPI(dependencies=[Depends(require_api_key)])`, so a route added later is protected without further code. Accepts `Authorization: Bearer <APEX_API_KEY>`, compared with `hmac.compare_digest`; missing or wrong → 401.
-- Public paths skip the API key check. Match `request.url.path` exactly, never by prefix, because `/api/health/daily` must stay protected:
+- Public paths skip the API key check. Match `request.scope["path"]`, the value the router matches on, exactly and never by prefix, because `/api/health/daily` must stay protected:
 
 | Path | Protected by |
 |---|---|
@@ -215,7 +214,7 @@ Response:
 
 Each phase is a vertical slice that can be verified on its own. Phases that add a migration must leave Alembic with a single head.
 
-**F21.2 — API auth + first preview.** Blocked by F21.1. Finding #18, §3.3, `api/index.py`, `vercel.json` without the cron, `.vercelignore`, Neon via Marketplace, migrations run, env vars set in Vercel (not git). Nothing may be deployed before this PR's auth is in place, because the later phases test against a deployed preview.
+**F21.2 — API auth + first preview.** Blocked by F21.1. Finding #18, §3.3, the `pyproject.toml` entrypoint, `vercel.json` without the cron, `.vercelignore`, Neon via Marketplace, migrations run, env vars set in Vercel (not git). Nothing may be deployed before this PR's auth is in place, because the later phases test against a deployed preview.
 *Accept:* auth tests green; local frontend works with the opt-out; on the preview URL `GET /api/health` → 200, `GET /api/trends/hrv` and `POST /api/plan/week/push` → 401 without a key, and `/docs` → 404.
 
 **F21.3 — Hosted WHOOP connection.** Blocked by F21.2. `oauth_pending_states` migration, `/auth/whoop/start`, `/auth/whoop/callback`, `TokenRepository.get_valid_access_token` with row lock, settings keys, ADR-0028 draft, ADR-0018 note "superseded for hosted deploy".

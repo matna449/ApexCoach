@@ -14,6 +14,11 @@ from apex_coach.config.settings import normalize_database_url
 from apex_coach.db.engine import create_engine
 from apex_coach.db.schema import metadata
 
+# web/backend reads these at import. Set after the imports above, which load .env.
+os.environ["APEX_ALLOW_UNAUTHENTICATED"] = "true"
+os.environ.pop("APEX_API_KEY", None)
+os.environ.pop("VERCEL", None)
+
 
 def pytest_addoption(parser):
     parser.addoption(
