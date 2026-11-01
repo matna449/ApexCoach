@@ -25,6 +25,7 @@ class Settings:
     apex_api_key: str | None = None
     apex_admin_key: str | None = None
     allow_unauthenticated: bool = False
+    apex_timezone: str = "Europe/Stockholm"
 
 
 def normalize_database_url(url: str) -> str:
@@ -54,6 +55,7 @@ def get_settings() -> Settings:
         ),
         apex_api_key=os.getenv("APEX_API_KEY"),
         apex_admin_key=os.getenv("APEX_ADMIN_KEY"),
+        apex_timezone=os.getenv("APEX_TIMEZONE", "Europe/Stockholm"),
         # Local development only, where the React frontend sends no key.
         allow_unauthenticated=(
             os.getenv("APEX_ALLOW_UNAUTHENTICATED") == "true" and "VERCEL" not in os.environ

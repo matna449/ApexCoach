@@ -76,6 +76,10 @@ class WhoopSleep(BaseModel):
     created_at: datetime
     score_state: ScoreState
     score: WhoopSleepScore | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+    nap: bool | None = None
+    cycle_id: int | None = None
 
     @field_validator("score_state")
     @classmethod
