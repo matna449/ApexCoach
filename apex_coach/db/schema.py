@@ -42,6 +42,12 @@ daily_metrics = sa.Table(
     sa.Column("whoop_sleep_id", sa.String, nullable=True),
     sa.Column("whoop_cycle_id", sa.String, nullable=True),
     sa.Column("whoop_synced_at", sa.String, nullable=True),
+    sa.Column("rpe_yesterday", sa.Integer, nullable=True),
+    sa.Column("soreness_note", sa.Text, nullable=True),
+    sa.Column("subjective_stress", sa.Integer, nullable=True),
+    sa.Column("pain_note", sa.Text, nullable=True),
+    sa.CheckConstraint("rpe_yesterday BETWEEN 1 AND 10", name="ck_daily_metrics_rpe_yesterday"),
+    sa.CheckConstraint("subjective_stress BETWEEN 1 AND 5", name="ck_daily_metrics_subjective_stress"),
 )
 
 hr_zones = sa.Table(

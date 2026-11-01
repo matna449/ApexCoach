@@ -28,7 +28,7 @@ import click
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from apex_coach.adapters.errors import AdapterError
 from apex_coach.adapters.ollama_adapter import RealOllamaAdapter
@@ -221,6 +221,50 @@ def _process_stored_event(
         return ERROR
     events.mark(trace_id, status)
     return status
+
+
+# -- F21.7: the AI health agent's answers (F21 spec §8) ----------------------
+
+
+class SubjectiveAnswers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: date | None = Field(default=None, alias="date")
+    rpe_yesterday: int | None = Field(default=None, ge=1, le=10)
+    soreness: str | None = None
+    soreness_level: int | None = Field(default=None, ge=1, le=5)
+    sleep_quality: int | None = Field(default=None, ge=1, le=5)
+    energy: int | None = Field(default=None, ge=1, le=5)
+    stress: int | None = Field(default=None, ge=1, le=5)
+    pain: str | None = None
+
+
+_SUBJECTIVE_COLUMNS = {
+    "rpe_yesterday": "rpe_yesterday",
+    "soreness": "soreness_note",
+    "soreness_level": "muscle_soreness",
+    "sleep_quality": "sleep_quality_felt",
+    "energy": "subjective_energy",
+    "stress": "subjective_stress",
+    "pain": "pain_note",
+}
+
+
+@app.post("/api/health/subjective")
+def health_subjective(answers: SubjectiveAnswers) -> dict:
+    """Partial update: only fields present in the body change, and an explicit
+    null clears one. A single upsert, so WHOOP's columns are left alone."""
+    fields = {
+        column: getattr(answers, name)
+        for name, column in _SUBJECTIVE_COLUMNS.items()
+        if name in answers.model_fields_set
+    }
+    if not fields:
+        raise HTTPException(status_code=422, detail="No answers in the request.")
+
+    day = (answers.day or datetime.now(_timezone()).date()).isoformat()
+    metrics_repo.upsert_daily_metrics(day, **fields)
+    return {"date": day, "updated": sorted(fields)}
 
 
 # -- F21.5: daily reconcile (F21 spec §8). Public in web/backend/auth.py: it has --
