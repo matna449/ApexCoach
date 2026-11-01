@@ -1,6 +1,7 @@
 """Sole writer for oauth_tokens (ADR-0003). Fernet encryption at rest (ADR-0005)."""
 
 import base64
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
@@ -8,7 +9,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from apex_coach.db.schema import oauth_tokens
+from apex_coach.db.schema import oauth_pending_states, oauth_tokens
 from apex_coach.db.upsert import dialect_insert
 
 # Domain-separation salt for a single-secret, single-machine KDF input — not a
@@ -16,10 +17,20 @@ from apex_coach.db.upsert import dialect_insert
 _KDF_SALT = b"apex-coach-oauth-token-encryption-v1"
 
 REFRESH_THRESHOLD = timedelta(seconds=60)
+PENDING_STATE_TTL = timedelta(minutes=10)
+REAUTH_REQUIRED = "REAUTH_REQUIRED"
+
+
+class TokenRefreshRejectedError(Exception):
+    """The provider refuses the refresh token. Only a new authorization helps."""
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_expiring(expires_at: str) -> bool:
+    return datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at) - REFRESH_THRESHOLD
 
 
 def _derive_fernet_key(apex_encryption_key: str) -> bytes:
@@ -67,6 +78,7 @@ class TokenRepository:
                 # onupdate=_now_iso on the column only fires for Core Update()
                 # statements, not ON CONFLICT DO UPDATE — set it explicitly.
                 "updated_at": _now_iso(),
+                "sync_status": None,
             },
         )
         with self._engine.begin() as conn:
@@ -91,6 +103,7 @@ class TokenRepository:
             ).decode("utf-8"),
             "expires_at": row.expires_at,
             "scope": row.scope,
+            "sync_status": row.sync_status,
         }
 
     def needs_refresh(self, provider: str) -> bool:
@@ -98,5 +111,92 @@ class TokenRepository:
         if token is None:
             raise ValueError(f"no stored token for provider {provider!r}")
 
-        expires_at = datetime.fromisoformat(token["expires_at"])
-        return datetime.now(timezone.utc) >= expires_at - REFRESH_THRESHOLD
+        return _is_expiring(token["expires_at"])
+
+    def get_valid_access_token(
+        self, provider: str, refresh_fn: Callable[[str], dict]
+    ) -> str:
+        """Refreshes under a lock, because providers that rotate refresh tokens
+        reject the second of two concurrent refreshes (F21 spec §5.1). refresh_fn
+        takes the refresh token, returns the token response and raises
+        TokenRefreshRejectedError when the provider refuses it."""
+        token = self.get_token(provider)
+        if token is None:
+            raise ValueError(f"no stored token for provider {provider!r}")
+        if not _is_expiring(token["expires_at"]):
+            return token["access_token"]
+
+        with self._engine.connect() as conn:
+            if conn.dialect.name == "sqlite":
+                # with_for_update() compiles to nothing on SQLite.
+                conn.exec_driver_sql("BEGIN IMMEDIATE")
+            row = conn.execute(
+                sa.select(oauth_tokens)
+                .where(oauth_tokens.c.provider == provider)
+                .with_for_update()
+            ).one()
+
+            # Another worker may have refreshed while this one waited.
+            if not _is_expiring(row.expires_at):
+                conn.commit()
+                return self._decrypt(row.access_token)
+            if row.sync_status == REAUTH_REQUIRED:
+                conn.commit()
+                raise TokenRefreshRejectedError(f"{provider} needs re-authorization")
+
+            try:
+                response = refresh_fn(self._decrypt(row.refresh_token))
+            except TokenRefreshRejectedError:
+                conn.execute(
+                    oauth_tokens.update()
+                    .where(oauth_tokens.c.provider == provider)
+                    .values(sync_status=REAUTH_REQUIRED)
+                )
+                conn.commit()
+                raise
+
+            conn.execute(
+                oauth_tokens.update()
+                .where(oauth_tokens.c.provider == provider)
+                .values(
+                    access_token=self._encrypt(response["access_token"]),
+                    refresh_token=self._encrypt(
+                        response.get("refresh_token") or self._decrypt(row.refresh_token)
+                    ),
+                    expires_at=(
+                        datetime.now(timezone.utc) + timedelta(seconds=response["expires_in"])
+                    ).isoformat(),
+                    scope=response.get("scope") or row.scope,
+                    sync_status=None,
+                )
+            )
+            conn.commit()
+            return response["access_token"]
+
+    def save_pending_state(self, state: str, code_verifier: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(
+                oauth_pending_states.insert().values(
+                    state=state, code_verifier=self._encrypt(code_verifier)
+                )
+            )
+
+    def consume_pending_state(self, state: str) -> str | None:
+        """Single use: the delete is atomic, so only one caller gets the verifier."""
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                oauth_pending_states.delete()
+                .where(oauth_pending_states.c.state == state)
+                .returning(oauth_pending_states.c.code_verifier, oauth_pending_states.c.created_at)
+            ).one_or_none()
+
+        if row is None:
+            return None
+        age = datetime.now(timezone.utc) - datetime.fromisoformat(row.created_at)
+        return self._decrypt(row.code_verifier) if age <= PENDING_STATE_TTL else None
+
+    def _encrypt(self, value: str) -> str:
+        return self._fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+
+    def _decrypt(self, value: str) -> str:
+        return self._fernet.decrypt(value.encode("utf-8")).decode("utf-8")

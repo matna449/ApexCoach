@@ -8,7 +8,6 @@ documented in docs/adr/0018.
 
 import time
 import urllib.parse
-from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 import httpx
@@ -20,6 +19,7 @@ from apex_coach.adapters.errors import (
     AdapterUnavailableError,
 )
 from apex_coach.adapters.oauth_pkce import generate_pkce_pair, generate_state
+from apex_coach.db.token_repository import TokenRefreshRejectedError
 from apex_coach.models.pydantic_models import (
     WhoopCycle,
     WhoopDailyPayload,
@@ -220,38 +220,28 @@ class RealWhoopAdapter:
         self._client = http_client or httpx.Client(base_url=WHOOP_BASE_URL)
 
     def _access_token(self) -> str:
-        # needs_refresh() raises a bare ValueError when no token has ever
-        # been saved — fetch first so a never-connected athlete gets a
+        # get_valid_access_token() raises a bare ValueError when no token has
+        # ever been saved — check first so a never-connected athlete gets a
         # clear AdapterError instead of an unhandled exception.
-        token = self._token_repo.get_token("WHOOP")
-        if token is None:
+        if self._token_repo.get_token("WHOOP") is None:
             raise WhoopReauthorizationRequiredError(
                 "no stored WHOOP token — run connect-whoop first"
             )
 
-        if self._token_repo.needs_refresh("WHOOP"):
-            try:
-                response = refresh_tokens(
-                    self._client_id, self._client_secret, token["refresh_token"]
-                )
-            except httpx.HTTPStatusError as e:
-                raise WhoopReauthorizationRequiredError(
-                    "token refresh failed — re-authorization required"
-                ) from e
+        try:
+            return self._token_repo.get_valid_access_token("WHOOP", self._refresh)
+        except TokenRefreshRejectedError as e:
+            raise WhoopReauthorizationRequiredError(
+                "token refresh failed — re-authorization required"
+            ) from e
 
-            expires_at = (
-                datetime.now(timezone.utc) + timedelta(seconds=response["expires_in"])
-            ).isoformat()
-            self._token_repo.save_token(
-                provider="WHOOP",
-                access_token=response["access_token"],
-                refresh_token=response.get("refresh_token", token["refresh_token"]),
-                expires_at=expires_at,
-                scope=WHOOP_SCOPE,
-            )
-            token = self._token_repo.get_token("WHOOP")
-
-        return token["access_token"]
+    def _refresh(self, refresh_token: str) -> dict:
+        try:
+            return refresh_tokens(self._client_id, self._client_secret, refresh_token)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (400, 401):
+                raise TokenRefreshRejectedError("WHOOP rejected the refresh token") from e
+            raise WhoopServerError(f"WHOOP token refresh failed: {e.response.status_code}") from e
 
     def _get(self, path: str) -> dict:
         """§6.1: 401 (handled by _access_token before this is called), 429

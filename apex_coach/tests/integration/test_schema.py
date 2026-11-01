@@ -12,6 +12,7 @@ EXPECTED_TABLES = {
     "weekly_plans",
     "monthly_targets",
     "oauth_tokens",
+    "oauth_pending_states",
     "athlete_profile",
     "race_goals",
 }
