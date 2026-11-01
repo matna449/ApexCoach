@@ -37,6 +37,11 @@ daily_metrics = sa.Table(
     sa.Column("sleep_quality_felt", sa.Integer, nullable=True),
     sa.Column("health_check_json", sa.Text, nullable=True),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
+    sa.Column("whoop_sleep_performance_pct", sa.Float, nullable=True),
+    sa.Column("whoop_recovery_score_state", sa.String, nullable=True),
+    sa.Column("whoop_sleep_id", sa.String, nullable=True),
+    sa.Column("whoop_cycle_id", sa.String, nullable=True),
+    sa.Column("whoop_synced_at", sa.String, nullable=True),
 )
 
 hr_zones = sa.Table(
@@ -337,4 +342,17 @@ oauth_pending_states = sa.Table(
     sa.Column("state", sa.String, primary_key=True),
     sa.Column("code_verifier", sa.Text, nullable=False),
     sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
+)
+
+# F21 spec §4: dedupe and audit trail for WHOOP webhooks.
+whoop_webhook_events = sa.Table(
+    "whoop_webhook_events",
+    metadata,
+    sa.Column("trace_id", sa.String, primary_key=True),
+    sa.Column("type", sa.String, nullable=False),
+    sa.Column("record_id", sa.String, nullable=False),
+    sa.Column("received_at", sa.String, nullable=False, default=_now_iso),
+    sa.Column("processed_at", sa.String, nullable=True),
+    sa.Column("status", sa.String, nullable=False),
+    sa.Column("error", sa.Text, nullable=True),
 )

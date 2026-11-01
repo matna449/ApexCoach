@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "monthly_targets",
     "oauth_tokens",
     "oauth_pending_states",
+    "whoop_webhook_events",
     "athlete_profile",
     "race_goals",
 }

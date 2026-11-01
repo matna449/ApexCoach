@@ -36,6 +36,8 @@ RATE_LIMIT_RETRY_DELAY_S = 60
 RATE_LIMIT_MAX_RETRIES = 3
 SERVER_ERROR_RETRY_DELAY_S = 30
 PENDING_SCORE_RETRY_DELAY_S = 600
+# The hosted sync runs in a request, so it cannot wait like the CLI does.
+HOSTED_RATE_LIMIT_DELAY_S = 2
 
 
 class WhoopReauthorizationRequiredError(AdapterUnavailableError):
@@ -285,6 +287,54 @@ class RealWhoopAdapter:
             if record["score_state"] == "PENDING_SCORE":
                 raise WhoopPendingScoreError("recovery still PENDING_SCORE after retry")
         return record
+
+    # -- Hosted sync: raw dicts, because the caller reads score_state before any
+    # validation (F21 spec finding #12), and no long waits (finding #11).
+
+    def _get_without_waiting(self, path: str, params: dict | None = None) -> dict | None:
+        """None on 404. One short wait on 429, none on a server error."""
+        headers = {"Authorization": f"Bearer {self._access_token()}"}
+
+        for attempt in range(2):
+            try:
+                response = self._client.get(path, headers=headers, params=params)
+            except httpx.TimeoutException as e:
+                raise AdapterTimeoutError(f"WHOOP request timed out: {path}") from e
+            except httpx.ConnectError as e:
+                raise AdapterUnavailableError(f"WHOOP connection failed: {path}") from e
+
+            if response.status_code == 429 and attempt == 0:
+                self._sleep(HOSTED_RATE_LIMIT_DELAY_S)
+                continue
+            if response.status_code == 429:
+                raise WhoopRateLimitError("WHOOP rate limit")
+            if response.status_code == 401:
+                raise WhoopReauthorizationRequiredError("401 from WHOOP — token invalid")
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 500:
+                raise WhoopServerError(f"WHOOP server error {response.status_code}")
+            response.raise_for_status()
+            return response.json()
+
+    def get_sleep(self, sleep_id: str) -> dict | None:
+        return self._get_without_waiting(f"/developer/v2/activity/sleep/{sleep_id}")
+
+    def get_recovery_for_cycle(self, cycle_id: int) -> dict | None:
+        return self._get_without_waiting(f"/developer/v2/cycle/{cycle_id}/recovery")
+
+    def get_cycles(self, start: str, end: str | None = None) -> list[dict]:
+        params = {"start": start, "limit": 25}
+        if end is not None:
+            params["end"] = end
+
+        records = []
+        while True:
+            page = self._get_without_waiting("/developer/v2/cycle", params)
+            records.extend(page["records"])
+            if not page.get("next_token"):
+                return records
+            params = {**params, "nextToken": page["next_token"]}
 
     def get_daily_payload(self, date: str) -> WhoopDailyPayload:
         # Validate each record immediately after fetching it, not after all

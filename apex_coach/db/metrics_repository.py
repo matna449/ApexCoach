@@ -58,6 +58,13 @@ class MetricsRepository:
             ).one_or_none()
         return _row_to_dict(row) if row is not None else None
 
+    def get_daily_metrics_by_whoop_sleep_id(self, sleep_id: str) -> dict | None:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                sa.select(daily_metrics).where(daily_metrics.c.whoop_sleep_id == sleep_id)
+            ).first()
+        return _row_to_dict(row) if row is not None else None
+
     def get_daily_metrics_range(self, start_date: str, end_date: str) -> list[dict]:
         with self._engine.begin() as conn:
             rows = conn.execute(

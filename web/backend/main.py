@@ -18,11 +18,14 @@ handlers added by later tickets should follow that same pattern.
 import hmac
 import html
 import json
+import logging
+import time
 from datetime import date, datetime, timezone, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import click
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -44,6 +47,8 @@ from apex_coach.db.engine import create_engine
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.token_repository import TokenRepository
+from apex_coach.db.webhook_repository import ERROR, WebhookEventRepository
+from apex_coach.services.whoop_sync import is_valid_signature, process_event
 from apex_coach.services.whoop_oauth import (
     InvalidOAuthStateError,
     complete_authorization,
@@ -61,6 +66,8 @@ from web.backend.auth import require_api_key
 # env var) fails fast on startup, exactly like the CLI does — not used yet,
 # but confirms the config-loading pattern is wired up correctly for later
 # tickets to build on.
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 engine = create_engine(settings.database_url)
 plan_repo = PlanRepository(engine)
@@ -139,6 +146,55 @@ def whoop_oauth_callback(
     except AdapterError:
         return HTMLResponse("<h1>WHOOP not connected</h1><p>Token exchange failed.</p>", 502)
     return HTMLResponse("<h1>WHOOP connected</h1><p>You can close this page.</p>")
+
+
+# -- F21.4: WHOOP webhook (F21 spec §6). Public in web/backend/auth.py: the --
+# -- signature protects it. Processing is synchronous, see docs/adr/0028. ---
+
+
+async def _raw_body(request: Request) -> bytes:
+    return await request.body()
+
+
+@app.post("/webhooks/whoop")
+def whoop_webhook(
+    body: bytes = Depends(_raw_body),
+    signature: str | None = Header(default=None, alias="X-WHOOP-Signature"),
+    timestamp: str | None = Header(default=None, alias="X-WHOOP-Signature-Timestamp"),
+) -> dict[str, str]:
+    if not settings.whoop_client_secret:
+        raise HTTPException(status_code=503, detail="WHOOP credentials are not configured.")
+    if not is_valid_signature(
+        settings.whoop_client_secret, timestamp, body, signature, int(time.time() * 1000)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid signature.")
+
+    try:
+        event = json.loads(body)
+        trace_id, event_type, record_id = event["trace_id"], event["type"], str(event["id"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(status_code=400, detail="Malformed event.") from e
+
+    events = WebhookEventRepository(engine)
+    if not events.record_received(trace_id, event_type, record_id):
+        return {"status": "duplicate"}
+
+    whoop = RealWhoopAdapter(
+        TokenRepository(engine, settings.apex_encryption_key),
+        settings.whoop_client_id,
+        settings.whoop_client_secret,
+    )
+    try:
+        status = process_event(
+            event_type, record_id, whoop, metrics_repo, ZoneInfo(settings.apex_timezone)
+        )
+    except AdapterError as e:
+        # The event is stored, and the daily reconcile fetches the data anyway.
+        logger.warning("WHOOP event %s failed: %s", trace_id, e)
+        events.mark(trace_id, ERROR, str(e))
+        return {"status": ERROR}
+    events.mark(trace_id, status)
+    return {"status": status}
 
 
 # -- F17.1: morning context (WHOOP fetch + session resolution + question --

@@ -107,6 +107,16 @@ def _table_names(url: str) -> set[str]:
         engine.dispose()
 
 
+def test_migrations_round_trip_on_sqlite(tmp_path):
+    cfg = _alembic_config(f"sqlite:///{tmp_path / 'round_trip.db'}")
+
+    command.upgrade(cfg, "head")
+    assert set(metadata.tables) <= _table_names(f"sqlite:///{tmp_path / 'round_trip.db'}")
+
+    command.downgrade(cfg, "base")
+    assert _table_names(f"sqlite:///{tmp_path / 'round_trip.db'}") == {"alembic_version"}
+
+
 def test_programmatic_alembic_ignores_database_url(tmp_path, monkeypatch):
     target = tmp_path / "target.db"
     other = tmp_path / "other.db"
