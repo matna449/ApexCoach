@@ -1,6 +1,6 @@
 # F21 — Hosted WHOOP Sync on Vercel (webhooks + Postgres)
 
-Status: proposed · Target: v1.5/v2.0 bridge · Supersedes in part: docs/adr/0018 (callback mechanism), docs/adr/0023 ("local-only, no PostgreSQL" scope)
+Status: implemented, see docs/adr/0028 · Target: v1.5/v2.0 bridge · Supersedes in part: docs/adr/0018 (callback mechanism), docs/adr/0023 ("local-only, no PostgreSQL" scope)
 
 Implementation spec for Claude Code. Every file/module named below exists today unless marked **(new)**. Record the decisions in a new ADR `docs/adr/0028-hosted-whoop-sync-on-vercel.md` **(new)** in the same frontmatter style (`status: accepted`) as 0018/0021.
 
