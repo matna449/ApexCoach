@@ -208,3 +208,15 @@ def test_get_session_score_returns_most_recent_when_multiple_rows_exist(repo):
 def test_session_scores_requires_existing_activity(repo):
     with pytest.raises(sa.exc.IntegrityError):
         repo.insert_session_score(activity_id="does-not-exist", execution_score=50.0)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"rpe_yesterday": 11}, {"rpe_yesterday": 0}, {"subjective_stress": 6}, {"subjective_stress": 0}],
+)
+def test_subjective_answers_are_range_checked_by_the_database(repository_engine, fields):
+    repo = MetricsRepository(repository_engine)
+
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.upsert_daily_metrics("2026-10-31", **fields)
+
