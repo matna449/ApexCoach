@@ -154,7 +154,7 @@ WHOOP rotates refresh tokens; two concurrent webhooks refreshing with the same t
 - `TZ = ZoneInfo(settings.apex_timezone)` (Europe/Stockholm; DST-aware — never a fixed +1).
 - **Sleep & recovery** → `date = local_date(sleep.end)` of the main sleep (`nap == false`). Recovery inherits the date of its sleep. If two non-nap sleeps end on the same local date, keep the one with the longest duration.
 - **Cycle strain** → `date = local_date(cycle.start + 6h)`. Cycles start at sleep onset, often before midnight; +6 h pushes 22:30 starts onto the next day.
-- Cycle with `end == null` is **today, in progress**: store strain, but `/api/health/daily` marks it `strain_in_progress: true`.
+- Cycle with `end == null` is **today, in progress**: store strain, but `/api/health/daily` marks it `strain_in_progress: true`. No column records `end`, so the endpoint marks today's strain and omits the field on other days.
 - `sleep_hours` = (in_bed − awake) as in `WhoopSleepScore.total_sleep_hours`; `sleep_performance_pct` = `sleep_performance_percentage`.
 - `rhr` rounded to int (finding #8).
 
@@ -177,6 +177,7 @@ Response:
 }
 ```
 - Averages use prior days only (`[D-7, D-1]`, `[D-30, D-1]`), consistent with ADR-0021; `hrv_30d_avg` via `compute_hrv_30d_avg`. Null when < 3 samples (7d) / < 7 samples (30d, ADR-0021 min).
+- `days` is newest first. Today always has an entry, other days only if they have a row. `subjective` holds only answered fields, which the 4 KB target needs: also `soreness_level` (the 1–5 `muscle_soreness`), and `soreness` is the free-text note. Long notes or every answer on every day can exceed 4 KB. `sync.status`: `REAUTH_REQUIRED` with no token or a rejected refresh; `STALE` with today's `SYNC_STALE`, no sync yet, or over 36 h since the last one.
 - Flags: `RECOVERY_RED` (recovery < 34, matches CONTEXT.md band), `HRV_BELOW_7D_20PCT` (hrv < 0.8 × hrv_7d_avg), `LOW_RECOVERY_3D` (recovery < 34 on D, D-1, D-2), `SYNC_STALE` (no WHOOP data for today after 10:00 local).
 - Computation in `apex_coach/services/health_summary.py` **(new)**; pure function over rows from `get_daily_metrics_range`.
 
