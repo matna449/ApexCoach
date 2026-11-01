@@ -1,3 +1,21 @@
+# What the Vercel function installs: Vercel reads this before requirements.txt,
+# which stays the full list for local development and tests. CI's `vercel-deps`
+# job imports the app with only these packages.
+[project]
+name = "apex-coach"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "cryptography>=42.0",
+    "click>=8.1",
+    "psycopg[binary]>=3.2",
+    "SQLAlchemy>=2.0",
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "fastapi>=0.115",
+]
+
 [tool.vercel]
 entrypoint = "web.backend.main:app"
 

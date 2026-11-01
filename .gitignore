@@ -24,3 +24,5 @@ token_store.db
 
 # Claude Code
 .claude/settings.local.json
+.vercel
+.env.local

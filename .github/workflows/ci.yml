@@ -29,6 +29,28 @@ jobs:
         run: |
           pytest --cov=apex_coach --cov-report=term-missing --cov-fail-under=80
 
+  vercel-deps:
+    runs-on: ubuntu-latest
+    env:
+      APEX_ENCRYPTION_KEY: test-ci-key
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install only what Vercel installs
+        run: |
+          python -c "import tomllib; print('\n'.join(tomllib.load(open('pyproject.toml', 'rb'))['project']['dependencies']))" > vercel-requirements.txt
+          pip install -r vercel-requirements.txt
+
+      - name: Import the app
+        run: |
+          python -c "from web.backend.main import app; print(len(app.routes), 'routes')"
+
   postgres:
     runs-on: ubuntu-latest
     env:
