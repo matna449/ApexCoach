@@ -22,6 +22,7 @@ class Settings:
     strava_client_id: str | None = None
     strava_client_secret: str | None = None
     strava_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
+    intervals_icu_api_key: str | None = None
     apex_api_key: str | None = None
     apex_admin_key: str | None = None
     cron_secret: str | None = None
@@ -54,6 +55,7 @@ def get_settings() -> Settings:
         strava_redirect_uri=os.getenv(
             "STRAVA_REDIRECT_URI", "https://matna449.github.io/ApexCoach/callback.html"
         ),
+        intervals_icu_api_key=os.getenv("INTERVALS_ICU_API_KEY"),
         apex_api_key=os.getenv("APEX_API_KEY"),
         apex_admin_key=os.getenv("APEX_ADMIN_KEY"),
         cron_secret=os.getenv("CRON_SECRET"),

@@ -435,6 +435,21 @@ def today(
         click.echo("[Flag: check_recovery_week_trigger]")
 
 
+def _intervals_icu_api_key(engine, settings) -> str:
+    """The key is static and never refreshed, so it can live in the environment
+    instead of oauth_tokens (F21 spec §3.4)."""
+    if settings.intervals_icu_api_key:
+        return settings.intervals_icu_api_key
+
+    token = TokenRepository(engine, settings.apex_encryption_key).get_token("INTERVALS_ICU")
+    if token is None:
+        raise click.ClickException(
+            "No intervals.icu API key stored — set INTERVALS_ICU_API_KEY or run "
+            "`connect-intervals-icu` first."
+        )
+    return token["access_token"]
+
+
 def _build_activity_sync_adapter(engine, settings, profile: dict | None, real: bool):
     """Dispatches to Strava or intervals.icu based on
     athlete_profile.activity_sync_provider (docs/adr/0025, PRD #89) — same
@@ -453,12 +468,7 @@ def _build_activity_sync_adapter(engine, settings, profile: dict | None, real: b
             token_repo, settings.strava_client_id, settings.strava_client_secret
         )
 
-    token = token_repo.get_token("INTERVALS_ICU")
-    if token is None:
-        raise click.ClickException(
-            "No intervals.icu API key stored — run `connect-intervals-icu` first."
-        )
-    return RealIntervalsIcuAdapter(token["access_token"])
+    return RealIntervalsIcuAdapter(_intervals_icu_api_key(engine, settings))
 
 
 def _build_plan_export_adapter(engine, settings, profile: dict | None, real: bool):
@@ -475,13 +485,7 @@ def _build_plan_export_adapter(engine, settings, profile: dict | None, real: boo
     if not real:
         return MockPlanExportAdapter()
 
-    token_repo = TokenRepository(engine, settings.apex_encryption_key)
-    token = token_repo.get_token("INTERVALS_ICU")
-    if token is None:
-        raise click.ClickException(
-            "No intervals.icu API key stored — run `connect-intervals-icu` first."
-        )
-    return RealIntervalsIcuAdapter(token["access_token"])
+    return RealIntervalsIcuAdapter(_intervals_icu_api_key(engine, settings))
 
 
 @cli.command(name="sync-session")

@@ -48,7 +48,7 @@ The CLI isn't installed as a console script — invoke it as a module: `python -
 3. `apex_coach connect-whoop` — one-time OAuth handshake (see `docs/adr/0018`).
 4. `apex_coach whoop-smoke --real` — verify the connection.
 5. Connect an activity-sync provider. **intervals.icu is the default** (docs/adr/0025) — Strava's API now requires a paid subscription, which is why intervals.icu replaced it as the un-configured default; Strava is still fully supported if you explicitly select it.
-   - intervals.icu: `apex_coach connect-intervals-icu` — stores your personal API key (Settings > API on intervals.icu). No OAuth handshake needed.
+   - intervals.icu: `apex_coach connect-intervals-icu` — stores your personal API key (Settings > API on intervals.icu). No OAuth handshake needed. Setting `INTERVALS_ICU_API_KEY` works too, and takes precedence.
    - Strava (alternative): `apex_coach connect-strava` — one-time OAuth handshake (see `docs/adr/0019`), then `apex_coach set-athlete-profile --activity-sync-provider STRAVA` to make it the active provider.
 6. `apex_coach sync-session --real ...` — verify the connection by syncing a real activity.
 
