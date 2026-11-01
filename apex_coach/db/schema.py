@@ -325,4 +325,16 @@ oauth_tokens = sa.Table(
     sa.Column("expires_at", sa.String, nullable=True),
     sa.Column("scope", sa.String, nullable=True),
     sa.Column("updated_at", sa.String, nullable=False, default=_now_iso, onupdate=_now_iso),
+    # REAUTH_REQUIRED once the provider rejects the refresh token, else NULL.
+    sa.Column("sync_status", sa.String, nullable=True),
+)
+
+# F21 spec §4: state and encrypted PKCE verifier between the hosted OAuth
+# start and callback requests.
+oauth_pending_states = sa.Table(
+    "oauth_pending_states",
+    metadata,
+    sa.Column("state", sa.String, primary_key=True),
+    sa.Column("code_verifier", sa.Text, nullable=False),
+    sa.Column("created_at", sa.String, nullable=False, default=_now_iso),
 )

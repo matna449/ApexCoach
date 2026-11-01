@@ -15,6 +15,8 @@ Config is loaded the exact same way the CLI loads it — see
 handlers added by later tickets should follow that same pattern.
 """
 
+import hmac
+import html
 import json
 from datetime import date, datetime, timezone, timedelta
 from types import SimpleNamespace
@@ -22,6 +24,7 @@ from types import SimpleNamespace
 import click
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from apex_coach.adapters.errors import AdapterError
@@ -41,6 +44,11 @@ from apex_coach.db.engine import create_engine
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
 from apex_coach.db.token_repository import TokenRepository
+from apex_coach.services.whoop_oauth import (
+    InvalidOAuthStateError,
+    complete_authorization,
+    start_authorization,
+)
 from apex_coach.services.health_check import (
     FIXED_QUESTIONS,
     evaluate_health_check,
@@ -80,6 +88,57 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# -- F21.3: hosted WHOOP connection (F21 spec §5). Public in web/backend/auth.py: --
+# -- start has its own admin key, and the callback needs a single-use state. ------
+
+
+def _require_whoop_credentials() -> None:
+    if not settings.whoop_client_id or not settings.whoop_client_secret:
+        raise HTTPException(status_code=503, detail="WHOOP credentials are not configured.")
+
+
+@app.get("/auth/whoop/start")
+def whoop_oauth_start(key: str = "") -> RedirectResponse:
+    if not settings.apex_admin_key:
+        raise HTTPException(status_code=503, detail="APEX_ADMIN_KEY is not configured.")
+    if not hmac.compare_digest(key.encode(), settings.apex_admin_key.encode()):
+        raise HTTPException(status_code=401, detail="Missing or invalid admin key.")
+    _require_whoop_credentials()
+
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    url = start_authorization(token_repo, settings.whoop_client_id, settings.whoop_redirect_uri)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/auth/whoop/callback", response_class=HTMLResponse)
+def whoop_oauth_callback(
+    code: str | None = None, state: str | None = None, error: str | None = None
+) -> HTMLResponse:
+    if error:
+        return HTMLResponse(
+            f"<h1>WHOOP not connected</h1><p>{html.escape(error)}</p>", status_code=400
+        )
+    if not code or not state:
+        return HTMLResponse("<h1>WHOOP not connected</h1><p>Missing code or state.</p>", 400)
+    _require_whoop_credentials()
+
+    token_repo = TokenRepository(engine, settings.apex_encryption_key)
+    try:
+        complete_authorization(
+            token_repo,
+            settings.whoop_client_id,
+            settings.whoop_client_secret,
+            settings.whoop_redirect_uri,
+            code,
+            state,
+        )
+    except InvalidOAuthStateError:
+        return HTMLResponse("<h1>WHOOP not connected</h1><p>Unknown or expired state.</p>", 400)
+    except AdapterError:
+        return HTMLResponse("<h1>WHOOP not connected</h1><p>Token exchange failed.</p>", 502)
+    return HTMLResponse("<h1>WHOOP connected</h1><p>You can close this page.</p>")
 
 
 # -- F17.1: morning context (WHOOP fetch + session resolution + question --
