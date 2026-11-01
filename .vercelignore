@@ -1,0 +1,11 @@
+*.db
+*.sqlite
+*.sqlite3
+*.docx
+.env*
+.venv
+.coverage
+docs
+scripts
+web/frontend
+apex_coach/tests

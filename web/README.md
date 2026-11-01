@@ -48,6 +48,10 @@ pip install -r requirements.txt
 uvicorn web.backend.main:app --reload --port 8000
 ```
 
+The API denies every request unless `.env` has `APEX_ALLOW_UNAUTHENTICATED=true`
+(the frontend sends no key, see `.env.example`) or the request carries
+`Authorization: Bearer <APEX_API_KEY>`. Only `GET /api/health` is open.
+
 Run uvicorn from the **repo root** — that's what puts `apex_coach` on the Python
 path (mirrors `pythonpath = ["."]` in `pyproject.toml`'s pytest config; no separate
 `sys.path` hacking needed).

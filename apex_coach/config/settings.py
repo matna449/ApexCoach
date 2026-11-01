@@ -22,6 +22,8 @@ class Settings:
     strava_client_id: str | None = None
     strava_client_secret: str | None = None
     strava_redirect_uri: str = "https://matna449.github.io/ApexCoach/callback.html"
+    apex_api_key: str | None = None
+    allow_unauthenticated: bool = False
 
 
 def normalize_database_url(url: str) -> str:
@@ -48,5 +50,10 @@ def get_settings() -> Settings:
         strava_client_secret=os.getenv("STRAVA_CLIENT_SECRET"),
         strava_redirect_uri=os.getenv(
             "STRAVA_REDIRECT_URI", "https://matna449.github.io/ApexCoach/callback.html"
+        ),
+        apex_api_key=os.getenv("APEX_API_KEY"),
+        # Local development only, where the React frontend sends no key.
+        allow_unauthenticated=(
+            os.getenv("APEX_ALLOW_UNAUTHENTICATED") == "true" and "VERCEL" not in os.environ
         ),
     )

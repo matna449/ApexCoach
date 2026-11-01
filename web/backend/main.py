@@ -20,7 +20,7 @@ from datetime import date, datetime, timezone, timedelta
 from types import SimpleNamespace
 
 import click
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -47,6 +47,7 @@ from apex_coach.services.health_check import (
     get_adaptive_questions,
     persist_health_check,
 )
+from web.backend.auth import require_api_key
 
 # Loaded at import time so a missing APEX_ENCRYPTION_KEY (or other required
 # env var) fails fast on startup, exactly like the CLI does — not used yet,
@@ -57,7 +58,13 @@ engine = create_engine(settings.database_url)
 plan_repo = PlanRepository(engine)
 metrics_repo = MetricsRepository(engine)
 
-app = FastAPI(title="ApexCoach Web API")
+app = FastAPI(
+    title="ApexCoach Web API",
+    dependencies=[Depends(require_api_key(settings))],
+    # The docs routes are registered outside the dependency system, so the
+    # dependency above would not cover them.
+    **({} if settings.allow_unauthenticated else {"docs_url": None, "redoc_url": None, "openapi_url": None}),
+)
 
 # Local dev only (SDD roadmap: v2.0 is the real multi-user/Azure milestone).
 # Allows the Vite dev server's default origin to call this API directly.

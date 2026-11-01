@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "web/backend/main.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{apex_coach/tests/**,web/frontend/**,docs/**,scripts/**}"
+    }
+  }
+}
