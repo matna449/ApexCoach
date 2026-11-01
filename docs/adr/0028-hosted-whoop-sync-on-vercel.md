@@ -1,10 +1,10 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Hosted WHOOP sync on Vercel: FastAPI function, Neon, default-deny auth, server-side OAuth
 
-Draft, finished in F21.8. The spec is docs/specs/F21_Vercel_WHOOP_Sync_Spec.md. This narrows the "local-only, no PostgreSQL" scope in docs/adr/0023 and adds a hosted callback next to docs/adr/0018.
+The spec is docs/specs/F21_Vercel_WHOOP_Sync_Spec.md. This narrows the "local-only, no PostgreSQL" scope in docs/adr/0023 and adds a hosted callback next to docs/adr/0018.
 
 **One FastAPI function, no frontend.** The React frontend sends no key and a browser cannot safely hold `APEX_API_KEY`, so hosting it would need its own login. `tool.vercel.entrypoint` in `pyproject.toml` selects `web.backend.main:app`. Vercel then installs from `pyproject.toml`, not `requirements.txt`, so `[project].dependencies` lists the runtime packages and the CI job `vercel-deps` imports the app with only those.
 
@@ -21,3 +21,8 @@ Draft, finished in F21.8. The spec is docs/specs/F21_Vercel_WHOOP_Sync_Spec.md. 
 **The sync never waits long.** A record that is not scored yet writes nothing and is left for the next event or the reconcile. A 429 gets one 2-second wait. The CLI keeps its long waits.
 
 **Deployment Protection stays on Standard.** It covers previews and leaves the production domain open. WHOOP's redirect and webhooks use that domain, and the app's own auth protects it.
+
+**The API path was verified on a real deployment.** Importing FastAPI by `tool.vercel.entrypoint` needs `[project].dependencies`; the first deploy crashed on import with an empty bundle because only `requirements.txt` listed them. A real WHOOP event, the 30-day backfill and the agent's read endpoint have all run on production.
+
+**Open.** Whether the CLI should also use Neon (spec open question 2). Until it does, local SQLite and Neon diverge, and `POST /api/plan/week/push` has no plans to read on Vercel.
+

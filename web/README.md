@@ -3,7 +3,8 @@
 Minimal, local-only web UI: a FastAPI façade over the existing engines/repositories
 plus a React frontend. See `docs/adr/0023` for the decision to pull this forward,
 scoped explicitly to local-only (no PostgreSQL, no Azure deployment, no
-multi-user/auth — that's real v2.0 work).
+multi-user/auth — that's real v2.0 work). F21 later added a single-user hosted
+backend, see [Hosted deployment](#hosted-deployment).
 
 This ticket (#66) is scaffolding only: it proves the plumbing works end-to-end
 with one trivial round trip (`GET /api/health`). It does not add any real
@@ -97,3 +98,62 @@ haven't already.
   reason to pre-build that structure for one health-check route.
 - **Dependencies in the root `requirements.txt`**, not a separate
   `web/backend/requirements.txt` — see the "Backend" section above.
+
+## Hosted deployment
+
+`web.backend.main:app` runs as one Vercel function on Python 3.12 (`tool.vercel.entrypoint` in `pyproject.toml`). Decisions are in `docs/adr/0028`, and the full design is in `docs/specs/F21_Vercel_WHOOP_Sync_Spec.md`. The local setup above is unaffected.
+
+### Routes
+
+| Route | Protected by |
+|---|---|
+| `GET /api/health` | Nothing, liveness only |
+| `POST /webhooks/whoop` | WHOOP's HMAC signature |
+| `GET /auth/whoop/start?key=` | `APEX_ADMIN_KEY` |
+| `GET /auth/whoop/callback` | Single-use OAuth state |
+| `GET /api/cron/whoop-reconcile?days=` | `CRON_SECRET` |
+| Everything else, including `GET /api/health/daily` and `POST /api/health/subjective` | `Authorization: Bearer <APEX_API_KEY>` |
+
+A missing key gives 503, never an open route. `/docs`, `/redoc` and `/openapi.json` are 404 on Vercel.
+
+### Environment variables
+
+Set these for Production and Preview, and never commit them. Vercel stores them as Secrets by default, which cannot be read back, so keep your own copy of the keys you generate.
+
+| Variable | Notes |
+|---|---|
+| `DATABASE_URL` | Pooled URL, added by the Neon integration |
+| `APEX_ENCRYPTION_KEY` | Encrypts stored tokens. Changing it means reconnecting WHOOP |
+| `APEX_API_KEY` | For the agent, `secrets.token_urlsafe(32)` |
+| `APEX_ADMIN_KEY` | Starts the WHOOP connection |
+| `CRON_SECRET` | Vercel sends it to the cron route |
+| `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET` | The secret also verifies webhooks |
+| `WHOOP_REDIRECT_URI` | `https://<app>.vercel.app/auth/whoop/callback` |
+| `APEX_TIMEZONE` | Optional, default `Europe/Stockholm` |
+| `INTERVALS_ICU_API_KEY` | Optional, only useful once plans are in Neon |
+
+### First setup
+
+1. Import the repository in Vercel as FastAPI, with root directory `./`.
+2. Connect a Neon database from the project's **Storage** tab.
+3. Keep **Deployment Protection** on **Standard Protection**. WHOOP has to reach the production domain, and **All Deployments** would block it.
+4. Set the variables above and redeploy.
+5. Run the migrations (below).
+6. In the WHOOP Developer Dashboard, add the redirect URI. Keep the GitHub Pages one, because the CLI uses it. Set the webhook URL to `https://<app>.vercel.app/webhooks/whoop`, with model version v2.
+7. Open `https://<app>.vercel.app/auth/whoop/start?key=<APEX_ADMIN_KEY>` and approve. Connecting also backfills 30 days.
+
+### Migrations
+
+Migrations never run on deploy. Run them from a shell before merging a change that needs them, with Neon's **direct** URL, whose host has no `-pooler`:
+
+```bash
+read -rs "DB?Direct Neon URL: "; echo; DATABASE_URL="$DB" .venv/bin/alembic upgrade head; DATABASE_URL="$DB" .venv/bin/alembic current; unset DB
+```
+
+### Operations
+
+- **Daily cron:** runs at 05:30 UTC and re-fetches the last three local days. Call it with `?days=30` to backfill (capped at 30).
+- **Sync state:** `sync.status` in `GET /api/health/daily` is `OK`, `STALE` or `REAUTH_REQUIRED`.
+- **`REAUTH_REQUIRED`:** WHOOP rejected the refresh token, or no token exists. Open the start link again.
+- **Logs:** `npx vercel logs` shows function output. WHOOP URLs appear there, and health values do not.
+

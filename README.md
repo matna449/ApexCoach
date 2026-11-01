@@ -56,6 +56,10 @@ A minimal local-only web UI (FastAPI façade + React) is scaffolded in
 [`web/`](./web/README.md) — see that README for how to run it alongside the
 CLI/DB above. It's additive: the CLI keeps working exactly as documented here.
 
+## Hosted deployment
+
+The FastAPI backend also runs on Vercel with Neon Postgres, so WHOOP data reaches the database without a process held by a person or an agent. The React frontend is not hosted, because it sends no API key. See [`web/README.md`](./web/README.md#hosted-deployment) for setup and [ADR-0028](./docs/adr/0028-hosted-whoop-sync-on-vercel.md) for the decisions.
+
 ## Working with this repo
 
 This repo also carries the design-decision infrastructure for stress-testing plans against the docs above:
