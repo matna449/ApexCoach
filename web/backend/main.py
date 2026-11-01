@@ -46,8 +46,9 @@ from apex_coach.config.settings import get_settings
 from apex_coach.db.engine import create_engine
 from apex_coach.db.plan_repository import PlanRepository
 from apex_coach.db.metrics_repository import MetricsRepository
-from apex_coach.db.token_repository import TokenRepository
+from apex_coach.db.token_repository import REAUTH_REQUIRED, TokenRepository
 from apex_coach.db.webhook_repository import ERROR, WebhookEventRepository
+from apex_coach.services.health_summary import build_daily_health, rows_needed_from
 from apex_coach.services.whoop_sync import (
     RECONCILE_DEFAULT_DAYS,
     RECONCILE_MAX_DAYS,
@@ -265,6 +266,25 @@ def health_subjective(answers: SubjectiveAnswers) -> dict:
     day = (answers.day or datetime.now(_timezone()).date()).isoformat()
     metrics_repo.upsert_daily_metrics(day, **fields)
     return {"date": day, "updated": sorted(fields)}
+
+
+# -- F21.6: the AI health agent's morning read (F21 spec §8) -----------------
+
+
+@app.get("/api/health/daily")
+def health_daily(days: int = Query(default=14, ge=1, le=90)) -> dict:
+    now = datetime.now(_timezone())
+    rows = metrics_repo.get_daily_metrics_range(
+        rows_needed_from(now.date(), days).isoformat(), now.date().isoformat()
+    )
+    token = TokenRepository(engine, settings.apex_encryption_key).get_token("WHOOP")
+    return build_daily_health(
+        rows,
+        days,
+        reauth_required=token is None or token["sync_status"] == REAUTH_REQUIRED,
+        pending_events=len(WebhookEventRepository(engine).get_unfinished()),
+        now=now,
+    )
 
 
 # -- F21.5: daily reconcile (F21 spec §8). Public in web/backend/auth.py: it has --
